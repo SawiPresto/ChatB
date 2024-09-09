@@ -6,7 +6,8 @@ import logging
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
-groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+api_key = os.getenv("GROQ_API_KEY")  # Gunakan os.getenv untuk akses variabel lingkungan
+groq_client = Groq(api_key=api_key)
 
 @app.route('/')
 def index():
