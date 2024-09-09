@@ -1,8 +1,11 @@
 from flask import Flask, request, jsonify, render_template
 import os
 from groq import Groq
+import logging
+
 
 app = Flask(__name__)
+logging.basicConfig(level=logging.INFO)
 groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
 @app.route('/')
@@ -21,5 +24,5 @@ def process_chat():
     return jsonify({"response": response})
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, host='0.0.0.0', port=8000)
 
