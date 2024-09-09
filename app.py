@@ -3,7 +3,7 @@ import os
 from groq import Groq
 
 app = Flask(__name__)
-groq_client = Groq(api_key=os.environ.get("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"))
+groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
 @app.route('/')
 def index():
