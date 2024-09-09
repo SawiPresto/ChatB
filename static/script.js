@@ -21,9 +21,6 @@ async function sendMessage() {
     // Clear input after sending message
     document.getElementById('user-input').value = '';
 
-    // Scroll chat container to bottom
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-
     // Add typing indicator
     const typingIndicator = document.createElement('div');
     typingIndicator.classList.add('message-container', 'system-message-container');
@@ -33,11 +30,14 @@ async function sendMessage() {
     typingIndicator.appendChild(typingIndicatorText);
     chatMessages.appendChild(typingIndicator);
 
+    // Scroll chat container to the bottom with smooth behavior
+    chatMessages.scroll({
+        top: chatMessages.scrollHeight,
+        behavior: 'smooth'
+    });
+
     // Add loading animation to button
     sendButton.classList.add('loading');
-
-    // Scroll chat container to bottom again for typing indicator
-    chatMessages.scrollTop = chatMessages.scrollHeight;
 
     try {
         const response = await fetch('/chat', {
@@ -76,12 +76,11 @@ async function sendMessage() {
         sendButton.disabled = false;
         sendButton.textContent = "Send";
         sendButton.classList.remove('loading');
-
-        // Scroll chat container to bottom for the new message
-        chatMessages.scrollTop = chatMessages.scrollHeight;
     } catch (error) {
         console.error('Error:', error);
         // Handle error case, possibly show an error message to the user
+        // Ensure to remove the typing indicator if an error occurs
+        chatMessages.removeChild(typingIndicator);
 
         // Enable send button and change text back
         sendButton.disabled = false;
@@ -89,7 +88,10 @@ async function sendMessage() {
         sendButton.classList.remove('loading');
     } finally {
         // Ensure scroll is at the bottom after messages are added
-        chatMessages.scrollTop = chatMessages.scrollHeight;
+        chatMessages.scroll({
+            top: chatMessages.scrollHeight,
+            behavior: 'smooth'
+        });
     }
 }
 
@@ -97,35 +99,38 @@ async function sendMessage() {
 async function typeMessage(element, paragraphs) {
     for (let i = 0; i < paragraphs.length; i++) {
         const paragraph = paragraphs[i];
+        let paragraphElement;
+
         if (paragraph.startsWith('*')) {
             // Split the bullet list items
             const listItems = paragraph.split('\n*');
             const list = document.createElement('ul');
-            listItems.forEach((item, index) => {
+            listItems.forEach((item) => {
                 // Remove the leading '*' from each item
                 item = item.substring(1).trim();
                 const listItem = document.createElement('li');
                 listItem.textContent = item;
                 list.appendChild(listItem);
             });
-            element.appendChild(list);
+            paragraphElement = list;
         } else if (paragraph.match(/^\d+\./)) {
             // Split the numbered list items
             const listItems = paragraph.split('\n');
             const list = document.createElement('ol');
-            listItems.forEach((item, index) => {
+            listItems.forEach((item) => {
                 // Remove the number and dot from each item
                 item = item.replace(/^\d+\./, '').trim();
                 const listItem = document.createElement('li');
                 listItem.textContent = item;
                 list.appendChild(listItem);
             });
-            element.appendChild(list);
+            paragraphElement = list;
         } else {
-            const paragraphElement = document.createElement('p');
-            paragraphElement.textContent = paragraph.trim();
-            element.appendChild(paragraphElement);
+            paragraphElement = document.createElement('p');
+            // Detect and format bold text
+            paragraphElement.innerHTML = paragraph.trim().replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
         }
+        element.appendChild(paragraphElement);
         // Wait a short time before typing the next paragraph
         await new Promise(resolve => setTimeout(resolve, 500)); // Adjust typing speed here
         // Scroll chat container to bottom after adding each paragraph
