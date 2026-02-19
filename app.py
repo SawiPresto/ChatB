@@ -30,25 +30,43 @@ def generate_chat_response(messages, model=DEFAULT_MODEL):
     chat_completion = groq_client.chat.completions.create(messages=messages, model=model)
     return chat_completion.choices[0].message.content
 
-
 def send_telegram_message(chat_id, text):
-    if not TELEGRAM_BOT_TOKEN:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN belum diset di environment server.")
+        if not TELEGRAM_BOT_TOKEN:
+                raise RuntimeError("TELEGRAM_BOT_TOKEN belum diset di environment server.")
 
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": chat_id,
-        "text": text,
-    }
-    body = json.dumps(payload).encode("utf-8")
-    req = urllib_request.Request(
-        url,
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib_request.urlopen(req, timeout=15) as response:
-        return response.read()
+        # Anti error kalau AI balas None atau kosong
+         if not text:
+      text = "..."
+
+         # Telegram limit 4096 karakter
+         if len(text) > 4000:
+          text = text[:4000]
+
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+
+         payload = {
+             "chat_id": chat_id,
+           "text": str(text)  # pastikan selalu string
+                    }
+
+                                                                                body = json.dumps(payload).encode("utf-8")
+
+                                                                                    req = urllib_request.Request(
+                                                                                            url,
+                                                                                                    data=body,
+                                                                                                            headers={"Content-Type": "application/json"}
+                                                                                                                )
+
+                                                                                                                    try:
+                                                                                                                            with urllib_request.urlopen(req, timeout=15) as response:
+                                                                                                                                        return response.read()
+                                                                                                                                            except Exception as e:
+                                                                                                                                                    print("ERROR TELEGRAM:", e)
+                                                                                                                                                            print("CHAT_ID:", chat_id)
+                                                                                                                                                                    print("TEXT LENGTH:", len(payload["text"]))
+                                                                                                                                                                            print("TEXT SAMPLE:", payload["text"][:200])
+                                                                                                                                                                                    raise
+
 
 @app.route('/')
 def index():
