@@ -32,40 +32,35 @@ def generate_chat_response(messages, model=DEFAULT_MODEL):
 
 def send_telegram_message(chat_id, text):
         if not TELEGRAM_BOT_TOKEN:
-                raise RuntimeError("TELEGRAM_BOT_TOKEN belum diset di environment server.")
+        raise RuntimeError("TELEGRAM_BOT_TOKEN belum diset di environment server.")
 
-        # Anti error kalau AI balas None atau kosong
-         if not text:
-      text = "..."
+        # Pastikan text tidak None
+        if not text:
+        text = "..."
 
-         # Telegram limit 4096 karakter
-         if len(text) > 4000:
-          text = text[:4000]
+        # Batas Telegram 4096 karakter
+        text = str(text)
+        if len(text) > 4000:
+        text = text[:4000]
 
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
          payload = {
              "chat_id": chat_id,
-           "text": str(text)  # pastikan selalu string
-                    }
+             "text": text,
+                   }
 
-                                                                                body = json.dumps(payload).encode("utf-8")
+         body = json.dumps(payload).encode("utf-8")
 
-                                                                                    req = urllib_request.Request(
-                                                                                            url,
-                                                                                                    data=body,
-                                                                                                            headers={"Content-Type": "application/json"}
-                                                                                                                )
+         req = urllib_request.Request(
+         url,
+           Data=body,
+           headers={"Content-Type": "application/json"},
+           method="POST",
+                                )
 
-                                                                                                                    try:
-                                                                                                                            with urllib_request.urlopen(req, timeout=15) as response:
-                                                                                                                                        return response.read()
-                                                                                                                                            except Exception as e:
-                                                                                                                                                    print("ERROR TELEGRAM:", e)
-                                                                                                                                                            print("CHAT_ID:", chat_id)
-                                                                                                                                                                    print("TEXT LENGTH:", len(payload["text"]))
-                                                                                                                                                                            print("TEXT SAMPLE:", payload["text"][:200])
-                                                                                                                                                                                    raise
+         with urllib_request.urlopen(req, timeout=15) as response:
+              return response.read()
 
 
 @app.route('/')
@@ -137,7 +132,7 @@ def telegram_webhook(secret):
         return jsonify({"ok": True}), 200
     except (HTTPError, URLError, RuntimeError) as exc:
         logger.exception("Error saat mengirim balasan ke Telegram")
-        return jsonify({"error": f"Gagal kirim balasan Telegram: {exc}"}), 502
+            return jsonify({"ok": False}), 200
 
 if __name__ == '__main__':
     port = int(os.getenv("PORT", "8000"))
