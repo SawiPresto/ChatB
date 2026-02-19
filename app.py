@@ -7,7 +7,7 @@ from groq import Groq
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-DEFAULT_MODEL = os.getenv("GROQ_MODEL", "gpt-oss-120b")
+DEFAULT_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
 
 def get_groq_client():
@@ -55,4 +55,3 @@ def process_chat():
 if __name__ == '__main__':
     port = int(os.getenv("PORT", "8000"))
     app.run(debug=True, host='0.0.0.0', port=port)
-

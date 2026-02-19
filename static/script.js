@@ -225,7 +225,7 @@ async function sendMessage() {
                 messages: [
                     { role: 'user', content: userInput }
                 ],
-                model: 'llama-3.1-8b-instant'
+                model: 'openai/gpt-oss-120b'
             })
         });
 
