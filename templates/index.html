@@ -1,20 +1,61 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="id">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Playfair+Display:wght@600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
-    <title>Chat with Language Model</title>
+    <title>ImDEV Assistant</title>
 </head>
 <body>
-    <div id="chat-container">
-        <h1>Mari Ngobrol dengan Mesin ImDEV</h1>
-        <div id="chat-messages">           
+    <div class="app-shell">
+        <section id="cat-companion" class="cat-state-idle" aria-live="polite">
+            <div class="cat-scene">
+                <div class="cat-book"></div>
+                <div class="cat-paw"></div>
+                <div class="cat-body">
+                    <div class="cat-ear cat-ear-left"></div>
+                    <div class="cat-ear cat-ear-right"></div>
+                    <div class="cat-face">
+                        <span class="cat-eye left"></span>
+                        <span class="cat-eye right"></span>
+                        <span class="cat-mouth"></span>
+                    </div>
+                </div>
+                <div class="cat-sparkles">
+                    <span></span><span></span><span></span>
+                </div>
+            </div>
+        </section>
+        <div id="chat-container">
+        <header class="chat-header">
+            <div>
+                <h1>ImDEV Assistant</h1>
+                <p class="subtitle">Asisten cerdas untuk percakapan yang cepat dan jelas</p>
+            </div>
+            <div class="header-tools">
+                <div class="status-pill">
+                    <span class="status-dot"></span>
+                    Online
+                </div>
+                <button id="voice-toggle" class="voice-btn" type="button" aria-pressed="false">Suara: Off</button>
+                <button id="voice-stop" class="voice-btn voice-btn-stop" type="button" disabled>Stop</button>
+            </div>
+        </header>
+        <div id="chat-messages">
+            <div class="message-container system-message-container">
+                <div class="system-message">
+                    Halo, ada yang bisa saya bantu hari ini?
+                </div>
+            </div>
         </div>
         <div id="input-container">
-            <input type="text" id="user-input" placeholder="Type your message...">
-            <button id="send-button" onclick="sendMessage()">Send</button>
+            <input type="text" id="user-input" placeholder="Tulis pesan kamu di sini...">
+            <button id="send-button" onclick="sendMessage()">Kirim</button>
         </div>
+    </div>
     </div>
 
     <script src="{{ url_for('static', filename='script.js') }}"></script>
