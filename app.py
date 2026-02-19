@@ -24,6 +24,13 @@ def index():
 def healthz():
     return jsonify({"status": "ok"}), 200
 
+@app.route('/debug/env', methods=['GET'])
+def debug_env():
+    return jsonify({
+        "has_groq_api_key": bool(os.getenv("GROQ_API_KEY")),
+        "groq_model": os.getenv("GROQ_MODEL", DEFAULT_MODEL),
+    }), 200
+
 @app.route('/chat', methods=['POST'])
 def process_chat():
     data = request.get_json(silent=True) or {}
