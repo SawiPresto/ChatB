@@ -1,122 +1,6 @@
 const catCompanion = document.getElementById('cat-companion');
-const catCaption = document.getElementById('cat-caption');
-const voiceToggleButton = document.getElementById('voice-toggle');
-const voiceStopButton = document.getElementById('voice-stop');
 let catResetTimer = null;
 let scrollAnimationFrame = null;
-const speechEngine = window.speechSynthesis || null;
-let isSpeechEnabled = false;
-let availableVoices = [];
-let preferredVoice = null;
-
-function selectPreferredVoice() {
-    if (!availableVoices.length) {
-        preferredVoice = null;
-        return;
-    }
-
-    const idVoices = availableVoices.filter((voice) => voice.lang && voice.lang.toLowerCase().startsWith('id'));
-    const priorityKeywords = ['google bahasa indonesia', 'indonesia', 'indonesian', 'id-id'];
-
-    preferredVoice =
-        idVoices.find((voice) => priorityKeywords.some((keyword) => voice.name.toLowerCase().includes(keyword))) ||
-        idVoices[0] ||
-        availableVoices.find((voice) => voice.lang && voice.lang.toLowerCase().startsWith('en')) ||
-        availableVoices[0] ||
-        null;
-}
-
-function refreshVoices() {
-    if (!speechEngine) return;
-    availableVoices = speechEngine.getVoices() || [];
-    selectPreferredVoice();
-}
-
-function setVoiceUiState() {
-    if (!voiceToggleButton || !voiceStopButton) return;
-
-    if (!speechEngine) {
-        voiceToggleButton.textContent = 'Suara: Tidak didukung';
-        voiceToggleButton.disabled = true;
-        voiceToggleButton.setAttribute('aria-pressed', 'false');
-        voiceStopButton.disabled = true;
-        return;
-    }
-
-    voiceToggleButton.textContent = `Suara: ${isSpeechEnabled ? 'On' : 'Off'}`;
-    voiceToggleButton.setAttribute('aria-pressed', isSpeechEnabled ? 'true' : 'false');
-    voiceStopButton.disabled = !speechEngine.speaking;
-}
-
-function initSpeechControls() {
-    if (!voiceToggleButton || !voiceStopButton) return;
-
-    isSpeechEnabled = Boolean(speechEngine);
-    if (speechEngine) {
-        refreshVoices();
-        speechEngine.addEventListener('voiceschanged', refreshVoices);
-    }
-    setVoiceUiState();
-
-    voiceToggleButton.addEventListener('click', () => {
-        if (!speechEngine) return;
-        isSpeechEnabled = !isSpeechEnabled;
-        if (!isSpeechEnabled) {
-            speechEngine.cancel();
-        }
-        setVoiceUiState();
-    });
-
-    voiceStopButton.addEventListener('click', () => {
-        if (!speechEngine) return;
-        speechEngine.cancel();
-        setVoiceUiState();
-    });
-}
-
-function normalizeTextForSpeech(text) {
-    return text
-        .replace(/```[\s\S]*?```/g, ' ')
-        .replace(/`([^`]+)`/g, '$1')
-        .replace(/\[(.*?)\]\((https?:\/\/[^\s)]+)\)/g, '$1')
-        .replace(/[#>*_\-~]/g, ' ')
-        .replace(/([.,!?;:])/g, '$1 ')
-        .replace(/\s*\n+\s*/g, '. ')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
-function speakText(text) {
-    if (!speechEngine || !isSpeechEnabled) return;
-
-    const cleanText = normalizeTextForSpeech(text);
-    if (!cleanText) return;
-
-    speechEngine.cancel();
-    refreshVoices();
-
-    const utterance = new SpeechSynthesisUtterance(cleanText);
-    utterance.lang = preferredVoice?.lang || 'id-ID';
-    if (preferredVoice) {
-        utterance.voice = preferredVoice;
-    }
-    utterance.rate = 0.94;
-    utterance.pitch = 1.03;
-    utterance.volume = 1;
-
-    utterance.onstart = () => {
-        setVoiceUiState();
-    };
-    utterance.onend = () => {
-        setVoiceUiState();
-    };
-    utterance.onerror = () => {
-        setVoiceUiState();
-    };
-
-    speechEngine.speak(utterance);
-    setVoiceUiState();
-}
 
 function smoothScrollToBottom(container, duration = 420) {
     if (!container) return;
@@ -152,22 +36,19 @@ function smoothScrollToBottom(container, duration = 420) {
     scrollAnimationFrame = requestAnimationFrame(step);
 }
 
-function setCatState(state, caption) {
+function setCatState(state) {
     if (!catCompanion) return;
     catCompanion.classList.remove('cat-state-idle', 'cat-state-thinking', 'cat-state-happy');
     catCompanion.classList.add(`cat-state-${state}`);
-    if (catCaption && caption) {
-        catCaption.textContent = caption;
-    }
 }
 
 function triggerHappyThenIdle() {
     if (catResetTimer) {
         clearTimeout(catResetTimer);
     }
-    setCatState('happy', 'Mochi senang, jawaban sudah siap.');
+    setCatState('happy');
     catResetTimer = setTimeout(() => {
-        setCatState('idle', 'Mochi lagi santai sambil nunggu pesan kamu.');
+        setCatState('idle');
     }, 1800);
 }
 
@@ -182,11 +63,7 @@ async function sendMessage() {
     // Disable send button and change text
     sendButton.disabled = true;
     sendButton.textContent = "Memproses...";
-    setCatState('thinking', 'Mochi lagi fokus ngerjain jawaban di buku...');
-    if (speechEngine) {
-        speechEngine.cancel();
-        setVoiceUiState();
-    }
+    setCatState('thinking');
 
     // Add user message to chat
     const userMessageContainer = document.createElement('div');
@@ -259,7 +136,6 @@ async function sendMessage() {
         sendButton.textContent = "Kirim";
         sendButton.classList.remove('loading');
         userInputEl.focus();
-        speakText(text);
         triggerHappyThenIdle();
     } catch (error) {
         console.error('Error:', error);
@@ -281,7 +157,7 @@ async function sendMessage() {
         sendButton.textContent = "Kirim";
         sendButton.classList.remove('loading');
         userInputEl.focus();
-        setCatState('idle', 'Mochi sempat bingung, coba kirim lagi ya.');
+        setCatState('idle');
     } finally {
         // Ensure scroll is at the bottom after messages are added
         smoothScrollToBottom(chatMessages);
@@ -434,5 +310,3 @@ document.getElementById('user-input').addEventListener('keypress', function (e) 
         sendMessage();
     }
 });
-
-initSpeechControls();

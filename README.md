@@ -23,7 +23,9 @@ Project ini sudah siap deploy menggunakan `Dockerfile`.
 3. Build method: `Dockerfile`.
 4. Set environment variable:
    - `GROQ_API_KEY` (wajib)
-   - `GROQ_MODEL` (opsional, default: `llama-3.1-8b-instant`)
+   - `GROQ_MODEL` (opsional, default: `openai/gpt-oss-120b`)
+   - `TELEGRAM_BOT_TOKEN` (opsional, untuk fitur bot Telegram)
+   - `TELEGRAM_WEBHOOK_SECRET` (opsional, untuk webhook Telegram)
 5. Port otomatis pakai `PORT` dari Koyeb.
 6. Health check endpoint: `/healthz`.
 
@@ -33,4 +35,18 @@ Container menjalankan:
 
 ```bash
 gunicorn --workers 2 --threads 4 --timeout 120 --bind 0.0.0.0:${PORT:-8000} app:app
+```
+
+## Integrasi Telegram (opsi native Flask)
+
+Setelah deploy dan env `TELEGRAM_BOT_TOKEN` + `TELEGRAM_WEBHOOK_SECRET` terisi, set webhook bot Telegram:
+
+```text
+https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=https://<domain-koyeb-kamu>/telegram/webhook/<TELEGRAM_WEBHOOK_SECRET>
+```
+
+Cek status webhook:
+
+```text
+https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/getWebhookInfo
 ```
