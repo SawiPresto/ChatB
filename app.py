@@ -31,36 +31,36 @@ def generate_chat_response(messages, model=DEFAULT_MODEL):
     return chat_completion.choices[0].message.content
 
 def send_telegram_message(chat_id, text):
-        if not TELEGRAM_BOT_TOKEN:
+     if not TELEGRAM_BOT_TOKEN:
         raise RuntimeError("TELEGRAM_BOT_TOKEN belum diset di environment server.")
 
         # Pastikan text tidak None
-        if not text:
+    if not text:
         text = "..."
 
         # Batas Telegram 4096 karakter
-        text = str(text)
-        if len(text) > 4000:
+    text = str(text)
+    if len(text) > 4000:
         text = text[:4000]
 
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
-         payload = {
+    payload = {
              "chat_id": chat_id,
              "text": text,
                    }
 
-         body = json.dumps(payload).encode("utf-8")
+    body = json.dumps(payload).encode("utf-8")
 
-         req = urllib_request.Request(
-         url,
+    req = urllib_request.Request(
+    url,
            Data=body,
            headers={"Content-Type": "application/json"},
            method="POST",
                                 )
 
-         with urllib_request.urlopen(req, timeout=15) as response:
-              return response.read()
+    with urllib_request.urlopen(req, timeout=15) as response:
+            return response.read()
 
 
 @app.route('/')
