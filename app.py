@@ -20,6 +20,10 @@ def get_groq_client():
 def index():
     return render_template('index.html')
 
+@app.route('/healthz', methods=['GET'])
+def healthz():
+    return jsonify({"status": "ok"}), 200
+
 @app.route('/chat', methods=['POST'])
 def process_chat():
     data = request.get_json(silent=True) or {}
