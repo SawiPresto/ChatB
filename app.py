@@ -34,13 +34,19 @@ def send_telegram_message(chat_id, text):
      if not TELEGRAM_BOT_TOKEN:
         raise RuntimeError("TELEGRAM_BOT_TOKEN belum diset di environment server.")
 
-        # Pastikan text tidak None
-    if not text:
+    # Fix 1: pastikan tidak None
+     if text is None:
+        text = "Maaf, terjadi kesalahan saat memproses pesan."
+
+     # Fix 2: paksa jadi string
+        text = str(text)
+
+     # Fix 3: hindari pesan kosong
+     if text.strip() == "":
         text = "..."
 
-        # Batas Telegram 4096 karakter
-    text = str(text)
-    if len(text) > 4000:
+     # Fix 4: batas Telegram (4096)
+     if len(text) > 4000:
         text = text[:4000]
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
