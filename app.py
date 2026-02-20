@@ -1,6 +1,8 @@
 import json
 import logging
 import os
+import re
+import html
 from urllib import request as urllib_request
 from urllib.error import HTTPError, URLError
 
@@ -46,15 +48,36 @@ def chunk_telegram_text(text, chunk_size=4000):
     return [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
 
 
+def format_text_for_telegram(text):
+    """Convert common markdown markers to Telegram HTML format."""
+    if text is None:
+        return ""
+
+    output = html.escape(str(text))
+    output = re.sub(r"```([\s\S]*?)```", lambda m: f"<pre>{m.group(1).strip()}</pre>", output)
+    output = re.sub(r"`([^`]+)`", r"<code>\1</code>", output)
+    output = re.sub(r"\*\*([^*\n]+)\*\*", r"<b>\1</b>", output)
+    output = re.sub(r"__([^_\n]+)__", r"<b>\1</b>", output)
+    output = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"<i>\1</i>", output)
+    output = re.sub(r"(?<!_)_([^_\n]+)_(?!_)", r"<i>\1</i>", output)
+    output = re.sub(r"~~([^~\n]+)~~", r"<s>\1</s>", output)
+    output = re.sub(
+        r"\[([^\]]+)\]\((https?://[^\s)]+)\)",
+        r'<a href="\2">\1</a>',
+        output,
+    )
+    return output.strip()
+
+
 def send_telegram_message(chat_id, text):
     token = get_telegram_token()
     if not token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN belum diset di environment server.")
 
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    chunks = chunk_telegram_text(text)
+    chunks = chunk_telegram_text(format_text_for_telegram(text))
     for chunk in chunks:
-        payload = {"chat_id": chat_id, "text": chunk}
+        payload = {"chat_id": chat_id, "text": chunk, "parse_mode": "HTML"}
         body = json.dumps(payload).encode("utf-8")
         req = urllib_request.Request(
             url,
