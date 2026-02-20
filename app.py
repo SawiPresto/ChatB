@@ -6,7 +6,7 @@ import html
 import sqlite3
 import time
 from collections import defaultdict, deque
-from threading import Lock
+from threading import Lock, Thread
 from urllib import request as urllib_request
 from urllib.error import HTTPError, URLError
 
@@ -505,183 +505,114 @@ def telegram_webhook(secret):
     if not message:
         return jsonify({"ok": True, "ignored": "no_message"}), 200
 
-    chat = message.get("chat") or {}
-    chat_id = chat.get("id")
-    text = (message.get("text") or "").strip()
-    if not chat_id:
-        return jsonify({"ok": True, "ignored": "no_chat_id"}), 200
-    register_telegram_request(chat_id)
-    admin_chat_ids = get_admin_chat_ids()
-    is_admin = int(chat_id) in admin_chat_ids
+    Thread(target=process_telegram_message, args=(message,), daemon=True).start()
+    return jsonify({"ok": True, "accepted": True}), 200
 
-    if not is_chat_allowed(chat_id):
-        try:
-            send_telegram_message(
-                chat_id=chat_id,
-                text="Maaf, chat ini belum diizinkan menggunakan bot.",
-            )
-        except (HTTPError, URLError, RuntimeError):
-            register_telegram_error()
-            logger.exception("Error saat mengirim balasan unauthorized chat Telegram")
-        return jsonify({"ok": True, "ignored": "unauthorized_chat"}), 200
 
-    if text:
-        register_telegram_message()
-
-    cmd = normalize_telegram_command(text)
-    if cmd == "/help" or cmd == "/start":
-        reply_text = (
-            "Halo! Kirim pertanyaanmu dan saya akan jawab.\n"
-            "Perintah:\n"
-            "/help - Tampilkan bantuan\n"
-            "/reset - Hapus riwayat percakapan\n"
-            "/stats - Lihat statistik bot\n"
-            "/setmodel <model> - Ubah model (admin)\n"
-            "/allow <chat_id> - Izinkan chat id (admin)\n"
-            "/deny <chat_id> - Blok chat id (admin)"
-        )
-        try:
-            send_telegram_message(chat_id=chat_id, text=reply_text)
-            return jsonify({"ok": True}), 200
-        except (HTTPError, URLError, RuntimeError) as exc:
-            register_telegram_error()
-            logger.exception("Error saat mengirim balasan command Telegram")
-            return jsonify({"ok": False, "error": str(exc)}), 200
-
-    if cmd == "/reset":
-        reset_chat_history(chat_id)
-        try:
-            send_telegram_message(chat_id=chat_id, text="Riwayat percakapan sudah direset.")
-            return jsonify({"ok": True}), 200
-        except (HTTPError, URLError, RuntimeError) as exc:
-            register_telegram_error()
-            logger.exception("Error saat mengirim balasan command Telegram")
-            return jsonify({"ok": False, "error": str(exc)}), 200
-
-    if cmd == "/stats":
-        try:
-            send_telegram_message(chat_id=chat_id, text=get_telegram_stats_summary())
-            return jsonify({"ok": True}), 200
-        except (HTTPError, URLError, RuntimeError) as exc:
-            register_telegram_error()
-            logger.exception("Error saat mengirim balasan command Telegram")
-            return jsonify({"ok": False, "error": str(exc)}), 200
-
-    if cmd == "/setmodel":
-        if not is_admin:
-            try:
-                send_telegram_message(chat_id=chat_id, text="Command ini hanya untuk admin.")
-                return jsonify({"ok": True, "ignored": "not_admin"}), 200
-            except (HTTPError, URLError, RuntimeError) as exc:
-                register_telegram_error()
-                logger.exception("Error saat mengirim balasan command Telegram")
-                return jsonify({"ok": False, "error": str(exc)}), 200
-        parts = text.split(maxsplit=1)
-        if len(parts) < 2 or not parts[1].strip():
-            try:
-                send_telegram_message(chat_id=chat_id, text="Format: /setmodel <nama-model>")
-                return jsonify({"ok": True, "ignored": "invalid_args"}), 200
-            except (HTTPError, URLError, RuntimeError) as exc:
-                register_telegram_error()
-                logger.exception("Error saat mengirim balasan command Telegram")
-                return jsonify({"ok": False, "error": str(exc)}), 200
-        new_model = parts[1].strip()
-        set_runtime_model(new_model)
-        try:
-            send_telegram_message(chat_id=chat_id, text=f"Model aktif diganti ke: {new_model}")
-            return jsonify({"ok": True}), 200
-        except (HTTPError, URLError, RuntimeError) as exc:
-            register_telegram_error()
-            logger.exception("Error saat mengirim balasan command Telegram")
-            return jsonify({"ok": False, "error": str(exc)}), 200
-
-    if cmd in {"/allow", "/deny"}:
-        if not is_admin:
-            try:
-                send_telegram_message(chat_id=chat_id, text="Command ini hanya untuk admin.")
-                return jsonify({"ok": True, "ignored": "not_admin"}), 200
-            except (HTTPError, URLError, RuntimeError) as exc:
-                register_telegram_error()
-                logger.exception("Error saat mengirim balasan command Telegram")
-                return jsonify({"ok": False, "error": str(exc)}), 200
-        parts = text.split(maxsplit=1)
-        if len(parts) < 2 or not parts[1].strip():
-            try:
-                send_telegram_message(chat_id=chat_id, text=f"Format: {cmd} <chat_id>")
-                return jsonify({"ok": True, "ignored": "invalid_args"}), 200
-            except (HTTPError, URLError, RuntimeError) as exc:
-                register_telegram_error()
-                logger.exception("Error saat mengirim balasan command Telegram")
-                return jsonify({"ok": False, "error": str(exc)}), 200
-        try:
-            target_chat_id = int(parts[1].strip())
-        except ValueError:
-            try:
-                send_telegram_message(chat_id=chat_id, text="chat_id harus berupa angka.")
-                return jsonify({"ok": True, "ignored": "invalid_chat_id"}), 200
-            except (HTTPError, URLError, RuntimeError) as exc:
-                register_telegram_error()
-                logger.exception("Error saat mengirim balasan command Telegram")
-                return jsonify({"ok": False, "error": str(exc)}), 200
-        set_allow_override(target_chat_id, allowed=(cmd == "/allow"))
-        try:
-            send_telegram_message(
-                chat_id=chat_id,
-                text=f"Override {cmd[1:]} berhasil untuk chat_id {target_chat_id}.",
-            )
-            return jsonify({"ok": True}), 200
-        except (HTTPError, URLError, RuntimeError) as exc:
-            register_telegram_error()
-            logger.exception("Error saat mengirim balasan command Telegram")
-            return jsonify({"ok": False, "error": str(exc)}), 200
-
-    if is_rate_limited(chat_id):
-        try:
-            send_telegram_message(
-                chat_id=chat_id,
-                text="Terlalu banyak request. Coba lagi beberapa saat.",
-            )
-            return jsonify({"ok": True, "rate_limited": True}), 200
-        except (HTTPError, URLError, RuntimeError) as exc:
-            register_telegram_error()
-            logger.exception("Error saat mengirim balasan rate-limit Telegram")
-            return jsonify({"ok": False, "error": str(exc)}), 200
-
-    allowed_quota, usage, limit = check_and_increment_daily_quota(chat_id)
-    if not allowed_quota:
-        try:
-            send_telegram_message(
-                chat_id=chat_id,
-                text=f"Kuota harian habis ({usage}/{limit}). Coba lagi besok.",
-            )
-            return jsonify({"ok": True, "quota_limited": True}), 200
-        except (HTTPError, URLError, RuntimeError) as exc:
-            register_telegram_error()
-            logger.exception("Error saat mengirim balasan quota-limit Telegram")
-            return jsonify({"ok": False, "error": str(exc)}), 200
-
-    if not text:
-        reply_text = "Kirim pesan teks ya, nanti saya bantu jawab."
-    else:
-        try:
-            messages = build_messages_from_history(chat_id, text)
-            reply_text = generate_chat_response(
-                messages=messages,
-                model=get_runtime_model(),
-            )
-            store_history_turn(chat_id, text, reply_text)
-        except Exception as exc:
-            register_telegram_error()
-            logger.exception("Error saat memproses request Telegram ke Groq")
-            reply_text = f"Maaf, terjadi error saat memproses pesan: {exc}"
-
+def process_telegram_message(message):
     try:
+        chat = message.get("chat") or {}
+        chat_id = chat.get("id")
+        text = (message.get("text") or "").strip()
+        if not chat_id:
+            return
+
+        register_telegram_request(chat_id)
+        admin_chat_ids = get_admin_chat_ids()
+        is_admin = int(chat_id) in admin_chat_ids
+
+        if not is_chat_allowed(chat_id):
+            send_telegram_message(chat_id=chat_id, text="Maaf, chat ini belum diizinkan menggunakan bot.")
+            return
+
+        if text:
+            register_telegram_message()
+
+        cmd = normalize_telegram_command(text)
+        if cmd in {"/help", "/start"}:
+            reply_text = (
+                "Halo! Kirim pertanyaanmu dan saya akan jawab.\n"
+                "Perintah:\n"
+                "/help - Tampilkan bantuan\n"
+                "/reset - Hapus riwayat percakapan\n"
+                "/stats - Lihat statistik bot\n"
+                "/setmodel <model> - Ubah model (admin)\n"
+                "/allow <chat_id> - Izinkan chat id (admin)\n"
+                "/deny <chat_id> - Blok chat id (admin)"
+            )
+            send_telegram_message(chat_id=chat_id, text=reply_text)
+            return
+
+        if cmd == "/reset":
+            reset_chat_history(chat_id)
+            send_telegram_message(chat_id=chat_id, text="Riwayat percakapan sudah direset.")
+            return
+
+        if cmd == "/stats":
+            send_telegram_message(chat_id=chat_id, text=get_telegram_stats_summary())
+            return
+
+        if cmd == "/setmodel":
+            if not is_admin:
+                send_telegram_message(chat_id=chat_id, text="Command ini hanya untuk admin.")
+                return
+            parts = text.split(maxsplit=1)
+            if len(parts) < 2 or not parts[1].strip():
+                send_telegram_message(chat_id=chat_id, text="Format: /setmodel <nama-model>")
+                return
+            new_model = parts[1].strip()
+            set_runtime_model(new_model)
+            send_telegram_message(chat_id=chat_id, text=f"Model aktif diganti ke: {new_model}")
+            return
+
+        if cmd in {"/allow", "/deny"}:
+            if not is_admin:
+                send_telegram_message(chat_id=chat_id, text="Command ini hanya untuk admin.")
+                return
+            parts = text.split(maxsplit=1)
+            if len(parts) < 2 or not parts[1].strip():
+                send_telegram_message(chat_id=chat_id, text=f"Format: {cmd} <chat_id>")
+                return
+            try:
+                target_chat_id = int(parts[1].strip())
+            except ValueError:
+                send_telegram_message(chat_id=chat_id, text="chat_id harus berupa angka.")
+                return
+            set_allow_override(target_chat_id, allowed=(cmd == "/allow"))
+            send_telegram_message(chat_id=chat_id, text=f"Override {cmd[1:]} berhasil untuk chat_id {target_chat_id}.")
+            return
+
+        if is_rate_limited(chat_id):
+            send_telegram_message(chat_id=chat_id, text="Terlalu banyak request. Coba lagi beberapa saat.")
+            return
+
+        allowed_quota, usage, limit = check_and_increment_daily_quota(chat_id)
+        if not allowed_quota:
+            send_telegram_message(chat_id=chat_id, text=f"Kuota harian habis ({usage}/{limit}). Coba lagi besok.")
+            return
+
+        # Inform quickly so user knows request is being processed.
+        send_telegram_message(chat_id=chat_id, text="Pesan diterima, sedang diproses...")
+
+        if not text:
+            reply_text = "Kirim pesan teks ya, nanti saya bantu jawab."
+        else:
+            try:
+                messages = build_messages_from_history(chat_id, text)
+                reply_text = generate_chat_response(messages=messages, model=get_runtime_model())
+                store_history_turn(chat_id, text, reply_text)
+            except Exception as exc:
+                register_telegram_error()
+                logger.exception("Error saat memproses request Telegram ke Groq")
+                reply_text = f"Maaf, terjadi error saat memproses pesan: {exc}"
+
         send_telegram_message(chat_id=chat_id, text=reply_text)
-        return jsonify({"ok": True}), 200
-    except (HTTPError, URLError, RuntimeError) as exc:
+    except (HTTPError, URLError, RuntimeError):
         register_telegram_error()
-        logger.exception("Error saat mengirim balasan ke Telegram")
-        return jsonify({"ok": False, "error": str(exc)}), 200
+        logger.exception("Error saat memproses background Telegram message")
+    except Exception:
+        register_telegram_error()
+        logger.exception("Unexpected error saat memproses background Telegram message")
 
 if __name__ == '__main__':
     port = int(os.getenv("PORT", "8000"))
