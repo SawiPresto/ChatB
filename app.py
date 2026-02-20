@@ -1,8 +1,8 @@
+import json
 import logging
 import os
-import json
 from urllib import request as urllib_request
-from urllib.error import URLError, HTTPError
+from urllib.error import HTTPError, URLError
 
 from flask import Flask, jsonify, render_template, request
 from groq import Groq
@@ -11,8 +11,14 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 DEFAULT_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET")
+
+
+def get_telegram_token():
+    return os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+
+
+def get_webhook_secret():
+    return os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip()
 
 
 def get_groq_client():
@@ -30,43 +36,34 @@ def generate_chat_response(messages, model=DEFAULT_MODEL):
     chat_completion = groq_client.chat.completions.create(messages=messages, model=model)
     return chat_completion.choices[0].message.content
 
+
+def chunk_telegram_text(text, chunk_size=4000):
+    if text is None:
+        text = ""
+    text = str(text).strip()
+    if not text:
+        text = "..."
+    return [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+
+
 def send_telegram_message(chat_id, text):
-     if not TELEGRAM_BOT_TOKEN:
+    token = get_telegram_token()
+    if not token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN belum diset di environment server.")
 
-    # Fix 1: pastikan tidak None
-     if text is None:
-        text = "Maaf, terjadi kesalahan saat memproses pesan."
-
-     # Fix 2: paksa jadi string
-        text = str(text)
-
-     # Fix 3: hindari pesan kosong
-     if text.strip() == "":
-        text = "..."
-
-     # Fix 4: batas Telegram (4096)
-     if len(text) > 4000:
-        text = text[:4000]
-
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-
-    payload = {
-             "chat_id": chat_id,
-             "text": text,
-                   }
-
-    body = json.dumps(payload).encode("utf-8")
-
-    req = urllib_request.Request(
-    url,
-           Data=body,
-           headers={"Content-Type": "application/json"},
-           method="POST",
-                                )
-
-    with urllib_request.urlopen(req, timeout=15) as response:
-            return response.read()
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    chunks = chunk_telegram_text(text)
+    for chunk in chunks:
+        payload = {"chat_id": chat_id, "text": chunk}
+        body = json.dumps(payload).encode("utf-8")
+        req = urllib_request.Request(
+            url,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib_request.urlopen(req, timeout=15):
+            pass
 
 
 @app.route('/')
@@ -81,6 +78,8 @@ def healthz():
 def debug_env():
     return jsonify({
         "has_groq_api_key": bool(os.getenv("GROQ_API_KEY")),
+        "has_telegram_bot_token": bool(get_telegram_token()),
+        "has_telegram_webhook_secret": bool(get_webhook_secret()),
         "groq_model": os.getenv("GROQ_MODEL", DEFAULT_MODEL),
     }), 200
 
@@ -103,9 +102,10 @@ def process_chat():
 
 @app.route('/telegram/webhook/<secret>', methods=['POST'])
 def telegram_webhook(secret):
-    if not TELEGRAM_WEBHOOK_SECRET:
+    expected_secret = get_webhook_secret()
+    if not expected_secret:
         return jsonify({"error": "TELEGRAM_WEBHOOK_SECRET belum diset di environment server."}), 503
-    if secret != TELEGRAM_WEBHOOK_SECRET:
+    if secret != expected_secret:
         return jsonify({"error": "Forbidden"}), 403
 
     update = request.get_json(silent=True) or {}
@@ -138,7 +138,7 @@ def telegram_webhook(secret):
         return jsonify({"ok": True}), 200
     except (HTTPError, URLError, RuntimeError) as exc:
         logger.exception("Error saat mengirim balasan ke Telegram")
-            return jsonify({"ok": False}), 200
+        return jsonify({"ok": False, "error": str(exc)}), 200
 
 if __name__ == '__main__':
     port = int(os.getenv("PORT", "8000"))
