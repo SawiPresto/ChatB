@@ -260,6 +260,7 @@ def register_telegram_error():
 def get_telegram_stats_summary():
     uptime_seconds = int(time.time() - APP_STARTED_AT)
     with store_lock:
+        current_model = runtime_config["model"]
         return (
             "Statistik Bot:\n"
             f"- Uptime: {uptime_seconds}s\n"
@@ -267,7 +268,7 @@ def get_telegram_stats_summary():
             f"- Total pesan diproses: {stats_store['telegram_messages_total']}\n"
             f"- Total error: {stats_store['telegram_errors_total']}\n"
             f"- Total chat unik: {len(stats_store['telegram_unique_chats'])}\n"
-            f"- Model aktif: {get_runtime_model()}"
+            f"- Model aktif: {current_model}"
         )
 
 
