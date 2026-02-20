@@ -31,6 +31,9 @@ TELEGRAM_SEND_RETRY_COUNT = max(1, int(os.getenv("TELEGRAM_SEND_RETRY_COUNT", "3
 TELEGRAM_SEND_RETRY_DELAY_SECONDS = float(
     os.getenv("TELEGRAM_SEND_RETRY_DELAY_SECONDS", "1.0")
 )
+TELEGRAM_PREMIUM_PRICE_XTR = max(1, int(os.getenv("TELEGRAM_PREMIUM_PRICE_XTR", "100")))
+TELEGRAM_PREMIUM_DURATION_DAYS = max(1, int(os.getenv("TELEGRAM_PREMIUM_DURATION_DAYS", "30")))
+TELEGRAM_PREMIUM_PLAN_NAME = os.getenv("TELEGRAM_PREMIUM_PLAN_NAME", "Premium 30 Hari").strip()
 APP_STARTED_AT = time.time()
 runtime_config = {"model": DEFAULT_MODEL}
 
@@ -90,6 +93,16 @@ def init_memory_store():
             CREATE TABLE IF NOT EXISTS bot_settings (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS telegram_subscriptions (
+                chat_id TEXT PRIMARY KEY,
+                plan_name TEXT NOT NULL,
+                expires_at REAL NOT NULL,
+                updated_at REAL NOT NULL
             )
             """
         )
@@ -274,6 +287,69 @@ def get_telegram_stats_summary():
             f"- Total chat unik: {len(stats_store['telegram_unique_chats'])}\n"
             f"- Model aktif: {current_model}"
         )
+
+
+def get_subscription(chat_id):
+    with get_db_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT plan_name, expires_at
+            FROM telegram_subscriptions
+            WHERE chat_id = ?
+            """,
+            (str(chat_id),),
+        ).fetchone()
+    if not row:
+        return None
+    return {"plan_name": row[0], "expires_at": float(row[1])}
+
+
+def is_premium(chat_id):
+    sub = get_subscription(chat_id)
+    if not sub:
+        return False
+    return sub["expires_at"] > time.time()
+
+
+def format_subscription_status(chat_id):
+    sub = get_subscription(chat_id)
+    if not sub:
+        return "Plan saat ini: Free.\nGunakan /upgrade untuk aktifkan premium."
+    expires_at = int(sub["expires_at"])
+    if expires_at <= int(time.time()):
+        return "Premium kamu sudah berakhir.\nGunakan /upgrade untuk perpanjang."
+    expires_utc = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(expires_at))
+    return (
+        f"Plan: {sub['plan_name']}\n"
+        f"Status: Aktif\n"
+        f"Berlaku sampai: {expires_utc}"
+    )
+
+
+def activate_premium(chat_id, plan_name=None, duration_days=None):
+    if not plan_name:
+        plan_name = TELEGRAM_PREMIUM_PLAN_NAME
+    if not duration_days:
+        duration_days = TELEGRAM_PREMIUM_DURATION_DAYS
+    now = time.time()
+    current = get_subscription(chat_id)
+    base_time = now
+    if current and current["expires_at"] > now:
+        base_time = current["expires_at"]
+    expires_at = base_time + (duration_days * 86400)
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO telegram_subscriptions(chat_id, plan_name, expires_at, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(chat_id) DO UPDATE SET
+                plan_name=excluded.plan_name,
+                expires_at=excluded.expires_at,
+                updated_at=excluded.updated_at
+            """,
+            (str(chat_id), plan_name, expires_at, now),
+        )
+    return expires_at
 
 
 def check_and_increment_daily_quota(chat_id):
@@ -519,12 +595,15 @@ def _send_telegram_payload(url, payload):
         raise last_exc
 
 
-def send_telegram_message(chat_id, text):
+def telegram_api_call(method, payload):
     token = get_telegram_token()
     if not token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN belum diset di environment server.")
+    url = f"https://api.telegram.org/bot{token}/{method}"
+    _send_telegram_payload(url, payload)
 
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
+
+def send_telegram_message(chat_id, text):
     html_chunks = chunk_telegram_text(format_text_for_telegram(text))
     plain_chunks = chunk_telegram_text(plain_text_for_telegram(text))
     html_failed = False
@@ -532,7 +611,7 @@ def send_telegram_message(chat_id, text):
     for chunk in html_chunks:
         payload = {"chat_id": chat_id, "text": chunk, "parse_mode": "HTML"}
         try:
-            _send_telegram_payload(url, payload)
+            telegram_api_call("sendMessage", payload)
         except HTTPError as exc:
             error_body = ""
             try:
@@ -551,7 +630,34 @@ def send_telegram_message(chat_id, text):
     # Fallback plain text when HTML parsing fails on Telegram side.
     if html_failed:
         for chunk in plain_chunks:
-            _send_telegram_payload(url, {"chat_id": chat_id, "text": chunk})
+            telegram_api_call("sendMessage", {"chat_id": chat_id, "text": chunk})
+
+
+def send_telegram_stars_invoice(chat_id):
+    payload = {
+        "chat_id": chat_id,
+        "title": TELEGRAM_PREMIUM_PLAN_NAME,
+        "description": (
+            f"Akses premium selama {TELEGRAM_PREMIUM_DURATION_DAYS} hari "
+            "dengan prioritas layanan."
+        ),
+        "payload": f"premium:{TELEGRAM_PREMIUM_DURATION_DAYS}",
+        "currency": "XTR",
+        "prices": [
+            {
+                "label": TELEGRAM_PREMIUM_PLAN_NAME,
+                "amount": TELEGRAM_PREMIUM_PRICE_XTR,
+            }
+        ],
+    }
+    telegram_api_call("sendInvoice", payload)
+
+
+def answer_pre_checkout_query(pre_checkout_query_id, ok=True, error_message=None):
+    payload = {"pre_checkout_query_id": pre_checkout_query_id, "ok": bool(ok)}
+    if error_message:
+        payload["error_message"] = error_message
+    telegram_api_call("answerPreCheckoutQuery", payload)
 
 
 @app.route('/')
@@ -574,6 +680,8 @@ def debug_env():
         "telegram_allowed_chat_ids_count": 0 if allowed_chat_ids is None else len(allowed_chat_ids),
         "telegram_admin_chat_ids_count": len(admin_chat_ids),
         "telegram_daily_quota": TELEGRAM_DAILY_QUOTA,
+        "telegram_premium_price_xtr": TELEGRAM_PREMIUM_PRICE_XTR,
+        "telegram_premium_duration_days": TELEGRAM_PREMIUM_DURATION_DAYS,
         "groq_model": get_runtime_model(),
     }), 200
 
@@ -608,6 +716,17 @@ def telegram_webhook(secret):
             return jsonify({"error": "Forbidden"}), 403
 
     update = request.get_json(silent=True) or {}
+    pre_checkout_query = update.get("pre_checkout_query")
+    if pre_checkout_query:
+        query_id = pre_checkout_query.get("id")
+        if query_id:
+            try:
+                answer_pre_checkout_query(query_id, ok=True)
+            except Exception:
+                register_telegram_error()
+                logger.exception("Error saat answerPreCheckoutQuery")
+        return jsonify({"ok": True, "accepted": "pre_checkout"}), 200
+
     message = update.get("message") or update.get("edited_message")
     if not message:
         return jsonify({"ok": True, "ignored": "no_message"}), 200
@@ -632,6 +751,31 @@ def process_telegram_message(message):
             send_telegram_message(chat_id=chat_id, text="Maaf, chat ini belum diizinkan menggunakan bot.")
             return
 
+        successful_payment = message.get("successful_payment") or {}
+        if successful_payment:
+            invoice_payload = str(successful_payment.get("invoice_payload") or "")
+            duration_days = TELEGRAM_PREMIUM_DURATION_DAYS
+            if invoice_payload.startswith("premium:"):
+                try:
+                    duration_days = max(1, int(invoice_payload.split(":", 1)[1]))
+                except ValueError:
+                    pass
+            expires_at = activate_premium(
+                chat_id=chat_id,
+                plan_name=TELEGRAM_PREMIUM_PLAN_NAME,
+                duration_days=duration_days,
+            )
+            expires_utc = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(int(expires_at)))
+            send_telegram_message(
+                chat_id=chat_id,
+                text=(
+                    "Pembayaran berhasil. Premium aktif.\n"
+                    f"Plan: {TELEGRAM_PREMIUM_PLAN_NAME}\n"
+                    f"Berlaku sampai: {expires_utc}"
+                ),
+            )
+            return
+
         if text:
             register_telegram_message()
 
@@ -642,6 +786,8 @@ def process_telegram_message(message):
                 "Perintah:\n"
                 "/help - Tampilkan bantuan\n"
                 "/reset - Hapus riwayat percakapan\n"
+                "/plan - Lihat status plan kamu\n"
+                f"/upgrade - Upgrade ke {TELEGRAM_PREMIUM_PLAN_NAME} ({TELEGRAM_PREMIUM_PRICE_XTR} XTR)\n"
                 "/stats - Lihat statistik bot\n"
                 "/setmodel <model> - Ubah model (admin)\n"
                 "/allow <chat_id> - Izinkan chat id (admin)\n"
@@ -657,6 +803,30 @@ def process_telegram_message(message):
 
         if cmd == "/stats":
             send_telegram_message(chat_id=chat_id, text=get_telegram_stats_summary())
+            return
+
+        if cmd == "/plan":
+            info = (
+                f"{format_subscription_status(chat_id)}\n\n"
+                f"Harga premium: {TELEGRAM_PREMIUM_PRICE_XTR} XTR / {TELEGRAM_PREMIUM_DURATION_DAYS} hari."
+            )
+            send_telegram_message(chat_id=chat_id, text=info)
+            return
+
+        if cmd == "/upgrade":
+            try:
+                send_telegram_stars_invoice(chat_id)
+                send_telegram_message(
+                    chat_id=chat_id,
+                    text="Invoice premium sudah dikirim. Silakan lanjutkan pembayaran Telegram Stars.",
+                )
+            except Exception as exc:
+                register_telegram_error()
+                logger.exception("Error saat mengirim invoice Stars")
+                send_telegram_message(
+                    chat_id=chat_id,
+                    text=f"Gagal membuat invoice premium: {exc}",
+                )
             return
 
         if cmd == "/setmodel":
@@ -693,10 +863,11 @@ def process_telegram_message(message):
             send_telegram_message(chat_id=chat_id, text="Terlalu banyak request. Coba lagi beberapa saat.")
             return
 
-        allowed_quota, usage, limit = check_and_increment_daily_quota(chat_id)
-        if not allowed_quota:
-            send_telegram_message(chat_id=chat_id, text=f"Kuota harian habis ({usage}/{limit}). Coba lagi besok.")
-            return
+        if not is_premium(chat_id):
+            allowed_quota, usage, limit = check_and_increment_daily_quota(chat_id)
+            if not allowed_quota:
+                send_telegram_message(chat_id=chat_id, text=f"Kuota harian habis ({usage}/{limit}). Coba lagi besok.")
+                return
 
         if not text:
             reply_text = "Kirim pesan teks ya, nanti saya bantu jawab."
