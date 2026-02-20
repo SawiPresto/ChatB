@@ -27,10 +27,13 @@ Project ini sudah siap deploy menggunakan `Dockerfile`.
    - `TELEGRAM_BOT_TOKEN` (opsional, untuk fitur bot Telegram)
    - `TELEGRAM_WEBHOOK_SECRET` (opsional, untuk webhook Telegram)
    - `TELEGRAM_ALLOWED_CHAT_IDS` (opsional, whitelist chat id dipisah koma, contoh: `12345,67890`)
+   - `TELEGRAM_ADMIN_CHAT_IDS` (opsional, chat id admin dipisah koma, contoh: `12345`)
    - `TELEGRAM_MAX_HISTORY` (opsional, default: `10`)
    - `TELEGRAM_RATE_LIMIT_COUNT` (opsional, default: `5`)
    - `TELEGRAM_RATE_LIMIT_WINDOW` (opsional, default: `60` detik)
+   - `TELEGRAM_DAILY_QUOTA` (opsional, default: `0` = nonaktif)
    - `TELEGRAM_MEMORY_DB_PATH` (opsional, default: `telegram_memory.db`)
+   - `TELEGRAM_WEBHOOK_HEADER_SECRET` (opsional, validasi header webhook Telegram)
 5. Port otomatis pakai `PORT` dari Koyeb.
 6. Health check endpoint: `/healthz`.
 
@@ -50,6 +53,12 @@ Setelah deploy dan env `TELEGRAM_BOT_TOKEN` + `TELEGRAM_WEBHOOK_SECRET` terisi, 
 https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=https://<domain-koyeb-kamu>/telegram/webhook/<TELEGRAM_WEBHOOK_SECRET>
 ```
 
+Jika menggunakan `TELEGRAM_WEBHOOK_HEADER_SECRET`, set webhook dengan `secret_token`:
+
+```text
+https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=https://<domain-koyeb-kamu>/telegram/webhook/<TELEGRAM_WEBHOOK_SECRET>&secret_token=<TELEGRAM_WEBHOOK_HEADER_SECRET>
+```
+
 Cek status webhook:
 
 ```text
@@ -61,6 +70,9 @@ Perintah bot Telegram:
 - `/help` atau `/start` -> bantuan
 - `/reset` -> reset memori chat
 - `/stats` -> statistik penggunaan bot
+- `/setmodel <model>` -> ganti model aktif (admin)
+- `/allow <chat_id>` -> izinkan chat id (admin)
+- `/deny <chat_id>` -> blok chat id (admin)
 
 Catatan memori Telegram:
 

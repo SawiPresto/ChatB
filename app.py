@@ -21,7 +21,9 @@ TELEGRAM_MAX_HISTORY = int(os.getenv("TELEGRAM_MAX_HISTORY", "10"))
 TELEGRAM_RATE_LIMIT_COUNT = int(os.getenv("TELEGRAM_RATE_LIMIT_COUNT", "5"))
 TELEGRAM_RATE_LIMIT_WINDOW = int(os.getenv("TELEGRAM_RATE_LIMIT_WINDOW", "60"))
 TELEGRAM_MEMORY_DB_PATH = os.getenv("TELEGRAM_MEMORY_DB_PATH", "telegram_memory.db")
+TELEGRAM_DAILY_QUOTA = int(os.getenv("TELEGRAM_DAILY_QUOTA", "0"))
 APP_STARTED_AT = time.time()
+runtime_config = {"model": DEFAULT_MODEL}
 
 rate_limit_hits = defaultdict(deque)
 stats_store = {
@@ -56,6 +58,32 @@ def init_memory_store():
             "CREATE INDEX IF NOT EXISTS idx_telegram_chat_history_chat_id_id "
             "ON telegram_chat_history(chat_id, id)"
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS telegram_quota_daily (
+                chat_id TEXT NOT NULL,
+                day TEXT NOT NULL,
+                count INTEGER NOT NULL,
+                PRIMARY KEY(chat_id, day)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS telegram_allowlist_overrides (
+                chat_id TEXT PRIMARY KEY,
+                allowed INTEGER NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS bot_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+            """
+        )
 
 
 init_memory_store()
@@ -67,6 +95,10 @@ def get_telegram_token():
 
 def get_webhook_secret():
     return os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip()
+
+
+def get_webhook_header_secret():
+    return os.getenv("TELEGRAM_WEBHOOK_HEADER_SECRET", "").strip()
 
 
 def get_allowed_chat_ids():
@@ -83,6 +115,86 @@ def get_allowed_chat_ids():
         except ValueError:
             logger.warning("TELEGRAM_ALLOWED_CHAT_IDS mengandung nilai tidak valid: %s", item)
     return allowed if allowed else None
+
+
+def get_admin_chat_ids():
+    raw = os.getenv("TELEGRAM_ADMIN_CHAT_IDS", "").strip()
+    if not raw:
+        return set()
+    admins = set()
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            admins.add(int(item))
+        except ValueError:
+            logger.warning("TELEGRAM_ADMIN_CHAT_IDS mengandung nilai tidak valid: %s", item)
+    return admins
+
+
+def get_runtime_model():
+    with store_lock:
+        return runtime_config["model"]
+
+
+def set_runtime_model(model):
+    with store_lock:
+        runtime_config["model"] = model
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO bot_settings(key, value) VALUES ('current_model', ?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value
+            """,
+            (model,),
+        )
+
+
+def load_runtime_model():
+    with get_db_connection() as conn:
+        row = conn.execute(
+            "SELECT value FROM bot_settings WHERE key = 'current_model'"
+        ).fetchone()
+    if row and row[0]:
+        with store_lock:
+            runtime_config["model"] = row[0]
+
+
+def set_allow_override(chat_id, allowed):
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO telegram_allowlist_overrides(chat_id, allowed)
+            VALUES (?, ?)
+            ON CONFLICT(chat_id) DO UPDATE SET allowed=excluded.allowed
+            """,
+            (str(chat_id), 1 if allowed else 0),
+        )
+
+
+def get_allow_override(chat_id):
+    with get_db_connection() as conn:
+        row = conn.execute(
+            "SELECT allowed FROM telegram_allowlist_overrides WHERE chat_id = ?",
+            (str(chat_id),),
+        ).fetchone()
+    if row is None:
+        return None
+    return bool(row[0])
+
+
+def is_chat_allowed(chat_id):
+    override = get_allow_override(chat_id)
+    if override is not None:
+        return override
+    allowed_chat_ids = get_allowed_chat_ids()
+    if allowed_chat_ids is None:
+        return True
+    return int(chat_id) in allowed_chat_ids
+
+
+load_runtime_model()
 
 
 def get_groq_client():
@@ -148,8 +260,36 @@ def get_telegram_stats_summary():
             f"- Total request webhook: {stats_store['telegram_requests_total']}\n"
             f"- Total pesan diproses: {stats_store['telegram_messages_total']}\n"
             f"- Total error: {stats_store['telegram_errors_total']}\n"
-            f"- Total chat unik: {len(stats_store['telegram_unique_chats'])}"
+            f"- Total chat unik: {len(stats_store['telegram_unique_chats'])}\n"
+            f"- Model aktif: {get_runtime_model()}"
         )
+
+
+def check_and_increment_daily_quota(chat_id):
+    if TELEGRAM_DAILY_QUOTA <= 0:
+        return True, 0, 0
+
+    day = time.strftime("%Y-%m-%d", time.gmtime())
+    chat_key = str(chat_id)
+    with get_db_connection() as conn:
+        row = conn.execute(
+            "SELECT count FROM telegram_quota_daily WHERE chat_id = ? AND day = ?",
+            (chat_key, day),
+        ).fetchone()
+        current = int(row[0]) if row else 0
+        if current >= TELEGRAM_DAILY_QUOTA:
+            return False, current, TELEGRAM_DAILY_QUOTA
+
+        new_count = current + 1
+        conn.execute(
+            """
+            INSERT INTO telegram_quota_daily(chat_id, day, count)
+            VALUES (?, ?, ?)
+            ON CONFLICT(chat_id, day) DO UPDATE SET count=excluded.count
+            """,
+            (chat_key, day, new_count),
+        )
+    return True, new_count, TELEGRAM_DAILY_QUOTA
 
 
 def reset_chat_history(chat_id):
@@ -318,12 +458,16 @@ def healthz():
 @app.route('/debug/env', methods=['GET'])
 def debug_env():
     allowed_chat_ids = get_allowed_chat_ids()
+    admin_chat_ids = get_admin_chat_ids()
     return jsonify({
         "has_groq_api_key": bool(os.getenv("GROQ_API_KEY")),
         "has_telegram_bot_token": bool(get_telegram_token()),
         "has_telegram_webhook_secret": bool(get_webhook_secret()),
+        "has_telegram_webhook_header_secret": bool(get_webhook_header_secret()),
         "telegram_allowed_chat_ids_count": 0 if allowed_chat_ids is None else len(allowed_chat_ids),
-        "groq_model": os.getenv("GROQ_MODEL", DEFAULT_MODEL),
+        "telegram_admin_chat_ids_count": len(admin_chat_ids),
+        "telegram_daily_quota": TELEGRAM_DAILY_QUOTA,
+        "groq_model": get_runtime_model(),
     }), 200
 
 @app.route('/chat', methods=['POST'])
@@ -350,6 +494,11 @@ def telegram_webhook(secret):
         return jsonify({"error": "TELEGRAM_WEBHOOK_SECRET belum diset di environment server."}), 503
     if secret != expected_secret:
         return jsonify({"error": "Forbidden"}), 403
+    expected_header_secret = get_webhook_header_secret()
+    if expected_header_secret:
+        actual_header_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+        if actual_header_secret != expected_header_secret:
+            return jsonify({"error": "Forbidden"}), 403
 
     update = request.get_json(silent=True) or {}
     message = update.get("message") or update.get("edited_message")
@@ -362,9 +511,10 @@ def telegram_webhook(secret):
     if not chat_id:
         return jsonify({"ok": True, "ignored": "no_chat_id"}), 200
     register_telegram_request(chat_id)
+    admin_chat_ids = get_admin_chat_ids()
+    is_admin = int(chat_id) in admin_chat_ids
 
-    allowed_chat_ids = get_allowed_chat_ids()
-    if allowed_chat_ids is not None and int(chat_id) not in allowed_chat_ids:
+    if not is_chat_allowed(chat_id):
         try:
             send_telegram_message(
                 chat_id=chat_id,
@@ -385,7 +535,10 @@ def telegram_webhook(secret):
             "Perintah:\n"
             "/help - Tampilkan bantuan\n"
             "/reset - Hapus riwayat percakapan\n"
-            "/stats - Lihat statistik bot"
+            "/stats - Lihat statistik bot\n"
+            "/setmodel <model> - Ubah model (admin)\n"
+            "/allow <chat_id> - Izinkan chat id (admin)\n"
+            "/deny <chat_id> - Blok chat id (admin)"
         )
         try:
             send_telegram_message(chat_id=chat_id, text=reply_text)
@@ -414,6 +567,74 @@ def telegram_webhook(secret):
             logger.exception("Error saat mengirim balasan command Telegram")
             return jsonify({"ok": False, "error": str(exc)}), 200
 
+    if cmd == "/setmodel":
+        if not is_admin:
+            try:
+                send_telegram_message(chat_id=chat_id, text="Command ini hanya untuk admin.")
+                return jsonify({"ok": True, "ignored": "not_admin"}), 200
+            except (HTTPError, URLError, RuntimeError) as exc:
+                register_telegram_error()
+                logger.exception("Error saat mengirim balasan command Telegram")
+                return jsonify({"ok": False, "error": str(exc)}), 200
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2 or not parts[1].strip():
+            try:
+                send_telegram_message(chat_id=chat_id, text="Format: /setmodel <nama-model>")
+                return jsonify({"ok": True, "ignored": "invalid_args"}), 200
+            except (HTTPError, URLError, RuntimeError) as exc:
+                register_telegram_error()
+                logger.exception("Error saat mengirim balasan command Telegram")
+                return jsonify({"ok": False, "error": str(exc)}), 200
+        new_model = parts[1].strip()
+        set_runtime_model(new_model)
+        try:
+            send_telegram_message(chat_id=chat_id, text=f"Model aktif diganti ke: {new_model}")
+            return jsonify({"ok": True}), 200
+        except (HTTPError, URLError, RuntimeError) as exc:
+            register_telegram_error()
+            logger.exception("Error saat mengirim balasan command Telegram")
+            return jsonify({"ok": False, "error": str(exc)}), 200
+
+    if cmd in {"/allow", "/deny"}:
+        if not is_admin:
+            try:
+                send_telegram_message(chat_id=chat_id, text="Command ini hanya untuk admin.")
+                return jsonify({"ok": True, "ignored": "not_admin"}), 200
+            except (HTTPError, URLError, RuntimeError) as exc:
+                register_telegram_error()
+                logger.exception("Error saat mengirim balasan command Telegram")
+                return jsonify({"ok": False, "error": str(exc)}), 200
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2 or not parts[1].strip():
+            try:
+                send_telegram_message(chat_id=chat_id, text=f"Format: {cmd} <chat_id>")
+                return jsonify({"ok": True, "ignored": "invalid_args"}), 200
+            except (HTTPError, URLError, RuntimeError) as exc:
+                register_telegram_error()
+                logger.exception("Error saat mengirim balasan command Telegram")
+                return jsonify({"ok": False, "error": str(exc)}), 200
+        try:
+            target_chat_id = int(parts[1].strip())
+        except ValueError:
+            try:
+                send_telegram_message(chat_id=chat_id, text="chat_id harus berupa angka.")
+                return jsonify({"ok": True, "ignored": "invalid_chat_id"}), 200
+            except (HTTPError, URLError, RuntimeError) as exc:
+                register_telegram_error()
+                logger.exception("Error saat mengirim balasan command Telegram")
+                return jsonify({"ok": False, "error": str(exc)}), 200
+        set_allow_override(target_chat_id, allowed=(cmd == "/allow"))
+        try:
+            send_telegram_message(
+                chat_id=chat_id,
+                text=f"Override {cmd[1:]} berhasil untuk chat_id {target_chat_id}.",
+            )
+            return jsonify({"ok": True}), 200
+        except (HTTPError, URLError, RuntimeError) as exc:
+            register_telegram_error()
+            logger.exception("Error saat mengirim balasan command Telegram")
+            return jsonify({"ok": False, "error": str(exc)}), 200
+
     if is_rate_limited(chat_id):
         try:
             send_telegram_message(
@@ -426,6 +647,19 @@ def telegram_webhook(secret):
             logger.exception("Error saat mengirim balasan rate-limit Telegram")
             return jsonify({"ok": False, "error": str(exc)}), 200
 
+    allowed_quota, usage, limit = check_and_increment_daily_quota(chat_id)
+    if not allowed_quota:
+        try:
+            send_telegram_message(
+                chat_id=chat_id,
+                text=f"Kuota harian habis ({usage}/{limit}). Coba lagi besok.",
+            )
+            return jsonify({"ok": True, "quota_limited": True}), 200
+        except (HTTPError, URLError, RuntimeError) as exc:
+            register_telegram_error()
+            logger.exception("Error saat mengirim balasan quota-limit Telegram")
+            return jsonify({"ok": False, "error": str(exc)}), 200
+
     if not text:
         reply_text = "Kirim pesan teks ya, nanti saya bantu jawab."
     else:
@@ -433,7 +667,7 @@ def telegram_webhook(secret):
             messages = build_messages_from_history(chat_id, text)
             reply_text = generate_chat_response(
                 messages=messages,
-                model=DEFAULT_MODEL,
+                model=get_runtime_model(),
             )
             store_history_turn(chat_id, text, reply_text)
         except Exception as exc:
