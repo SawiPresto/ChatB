@@ -69,24 +69,68 @@ def format_text_for_telegram(text):
     return output.strip()
 
 
+def plain_text_for_telegram(text):
+    if text is None:
+        return "..."
+    output = str(text)
+    output = re.sub(r"```([\s\S]*?)```", r"\1", output)
+    output = re.sub(r"`([^`]+)`", r"\1", output)
+    output = re.sub(r"\*\*([^*\n]+)\*\*", r"\1", output)
+    output = re.sub(r"__([^_\n]+)__", r"\1", output)
+    output = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"\1", output)
+    output = re.sub(r"(?<!_)_([^_\n]+)_(?!_)", r"\1", output)
+    output = re.sub(r"~~([^~\n]+)~~", r"\1", output)
+    output = re.sub(r"\[([^\]]+)\]\((https?://[^\s)]+)\)", r"\1 (\2)", output)
+    output = re.sub(r"<[^>]+>", "", output)
+    output = html.unescape(output).strip()
+    return output or "..."
+
+
+def _send_telegram_payload(url, payload):
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib_request.Request(
+        url,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib_request.urlopen(req, timeout=15):
+        pass
+
+
 def send_telegram_message(chat_id, text):
     token = get_telegram_token()
     if not token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN belum diset di environment server.")
 
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    chunks = chunk_telegram_text(format_text_for_telegram(text))
-    for chunk in chunks:
+    html_chunks = chunk_telegram_text(format_text_for_telegram(text))
+    plain_chunks = chunk_telegram_text(plain_text_for_telegram(text))
+    html_failed = False
+
+    for chunk in html_chunks:
         payload = {"chat_id": chat_id, "text": chunk, "parse_mode": "HTML"}
-        body = json.dumps(payload).encode("utf-8")
-        req = urllib_request.Request(
-            url,
-            data=body,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib_request.urlopen(req, timeout=15):
-            pass
+        try:
+            _send_telegram_payload(url, payload)
+        except HTTPError as exc:
+            error_body = ""
+            try:
+                error_body = exc.read().decode("utf-8", errors="replace")
+            except Exception:
+                pass
+            logger.warning("Telegram HTML mode gagal (%s): %s", exc.code, error_body)
+            if exc.code == 400:
+                html_failed = True
+                break
+            raise
+
+    if len(plain_chunks) == 0:
+        return
+
+    # Fallback plain text when HTML parsing fails on Telegram side.
+    if html_failed:
+        for chunk in plain_chunks:
+            _send_telegram_payload(url, {"chat_id": chat_id, "text": chunk})
 
 
 @app.route('/')
