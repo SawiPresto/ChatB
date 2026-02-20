@@ -3,6 +3,9 @@ import logging
 import os
 import re
 import html
+import time
+from collections import defaultdict, deque
+from threading import Lock
 from urllib import request as urllib_request
 from urllib.error import HTTPError, URLError
 
@@ -13,6 +16,13 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 DEFAULT_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+TELEGRAM_MAX_HISTORY = int(os.getenv("TELEGRAM_MAX_HISTORY", "10"))
+TELEGRAM_RATE_LIMIT_COUNT = int(os.getenv("TELEGRAM_RATE_LIMIT_COUNT", "5"))
+TELEGRAM_RATE_LIMIT_WINDOW = int(os.getenv("TELEGRAM_RATE_LIMIT_WINDOW", "60"))
+
+chat_histories = defaultdict(list)
+rate_limit_hits = defaultdict(deque)
+store_lock = Lock()
 
 
 def get_telegram_token():
@@ -37,6 +47,50 @@ def generate_chat_response(messages, model=DEFAULT_MODEL):
 
     chat_completion = groq_client.chat.completions.create(messages=messages, model=model)
     return chat_completion.choices[0].message.content
+
+
+def normalize_telegram_command(text):
+    if not text:
+        return ""
+    cmd = text.strip().split()[0].lower()
+    # Handle group format: /help@YourBot
+    if "@" in cmd:
+        cmd = cmd.split("@", 1)[0]
+    return cmd
+
+
+def is_rate_limited(chat_id):
+    now = time.time()
+    with store_lock:
+        entries = rate_limit_hits[chat_id]
+        while entries and (now - entries[0]) > TELEGRAM_RATE_LIMIT_WINDOW:
+            entries.popleft()
+        if len(entries) >= TELEGRAM_RATE_LIMIT_COUNT:
+            return True
+        entries.append(now)
+        return False
+
+
+def reset_chat_history(chat_id):
+    with store_lock:
+        chat_histories.pop(chat_id, None)
+
+
+def build_messages_from_history(chat_id, user_text):
+    with store_lock:
+        history = list(chat_histories.get(chat_id, []))
+    return history + [{"role": "user", "content": user_text}]
+
+
+def store_history_turn(chat_id, user_text, assistant_text):
+    with store_lock:
+        history = chat_histories[chat_id]
+        history.append({"role": "user", "content": user_text})
+        history.append({"role": "assistant", "content": assistant_text})
+        # Keep the latest N turns (2 messages per turn).
+        max_messages = max(2, TELEGRAM_MAX_HISTORY * 2)
+        if len(history) > max_messages:
+            chat_histories[chat_id] = history[-max_messages:]
 
 
 def chunk_telegram_text(text, chunk_size=4000):
@@ -186,16 +240,51 @@ def telegram_webhook(secret):
     if not chat_id:
         return jsonify({"ok": True, "ignored": "no_chat_id"}), 200
 
+    cmd = normalize_telegram_command(text)
+    if cmd == "/help" or cmd == "/start":
+        reply_text = (
+            "Halo! Kirim pertanyaanmu dan saya akan jawab.\n"
+            "Perintah:\n"
+            "/help - Tampilkan bantuan\n"
+            "/reset - Hapus riwayat percakapan"
+        )
+        try:
+            send_telegram_message(chat_id=chat_id, text=reply_text)
+            return jsonify({"ok": True}), 200
+        except (HTTPError, URLError, RuntimeError) as exc:
+            logger.exception("Error saat mengirim balasan command Telegram")
+            return jsonify({"ok": False, "error": str(exc)}), 200
+
+    if cmd == "/reset":
+        reset_chat_history(chat_id)
+        try:
+            send_telegram_message(chat_id=chat_id, text="Riwayat percakapan sudah direset.")
+            return jsonify({"ok": True}), 200
+        except (HTTPError, URLError, RuntimeError) as exc:
+            logger.exception("Error saat mengirim balasan command Telegram")
+            return jsonify({"ok": False, "error": str(exc)}), 200
+
+    if is_rate_limited(chat_id):
+        try:
+            send_telegram_message(
+                chat_id=chat_id,
+                text="Terlalu banyak request. Coba lagi beberapa saat.",
+            )
+            return jsonify({"ok": True, "rate_limited": True}), 200
+        except (HTTPError, URLError, RuntimeError) as exc:
+            logger.exception("Error saat mengirim balasan rate-limit Telegram")
+            return jsonify({"ok": False, "error": str(exc)}), 200
+
     if not text:
         reply_text = "Kirim pesan teks ya, nanti saya bantu jawab."
-    elif text.lower() in {"/start", "/help"}:
-        reply_text = "Halo! Kirim pertanyaanmu, nanti saya jawab."
     else:
         try:
+            messages = build_messages_from_history(chat_id, text)
             reply_text = generate_chat_response(
-                messages=[{"role": "user", "content": text}],
+                messages=messages,
                 model=DEFAULT_MODEL,
             )
+            store_history_turn(chat_id, text, reply_text)
         except Exception as exc:
             logger.exception("Error saat memproses request Telegram ke Groq")
             reply_text = f"Maaf, terjadi error saat memproses pesan: {exc}"
