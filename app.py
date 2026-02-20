@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import html
+import sqlite3
 import time
 from collections import defaultdict, deque
 from threading import Lock
@@ -19,9 +20,9 @@ DEFAULT_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 TELEGRAM_MAX_HISTORY = int(os.getenv("TELEGRAM_MAX_HISTORY", "10"))
 TELEGRAM_RATE_LIMIT_COUNT = int(os.getenv("TELEGRAM_RATE_LIMIT_COUNT", "5"))
 TELEGRAM_RATE_LIMIT_WINDOW = int(os.getenv("TELEGRAM_RATE_LIMIT_WINDOW", "60"))
+TELEGRAM_MEMORY_DB_PATH = os.getenv("TELEGRAM_MEMORY_DB_PATH", "telegram_memory.db")
 APP_STARTED_AT = time.time()
 
-chat_histories = defaultdict(list)
 rate_limit_hits = defaultdict(deque)
 stats_store = {
     "telegram_requests_total": 0,
@@ -30,6 +31,34 @@ stats_store = {
     "telegram_unique_chats": set(),
 }
 store_lock = Lock()
+
+
+def get_db_connection():
+    conn = sqlite3.connect(TELEGRAM_MEMORY_DB_PATH)
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
+def init_memory_store():
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS telegram_chat_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at REAL NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_telegram_chat_history_chat_id_id "
+            "ON telegram_chat_history(chat_id, id)"
+        )
+
+
+init_memory_store()
 
 
 def get_telegram_token():
@@ -124,25 +153,64 @@ def get_telegram_stats_summary():
 
 
 def reset_chat_history(chat_id):
-    with store_lock:
-        chat_histories.pop(chat_id, None)
+    with get_db_connection() as conn:
+        conn.execute(
+            "DELETE FROM telegram_chat_history WHERE chat_id = ?",
+            (str(chat_id),),
+        )
 
 
 def build_messages_from_history(chat_id, user_text):
-    with store_lock:
-        history = list(chat_histories.get(chat_id, []))
+    max_messages = max(2, TELEGRAM_MAX_HISTORY * 2)
+    with get_db_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT role, content
+            FROM telegram_chat_history
+            WHERE chat_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (str(chat_id), max_messages),
+        ).fetchall()
+
+    history = [{"role": row[0], "content": row[1]} for row in reversed(rows)]
     return history + [{"role": "user", "content": user_text}]
 
 
 def store_history_turn(chat_id, user_text, assistant_text):
-    with store_lock:
-        history = chat_histories[chat_id]
-        history.append({"role": "user", "content": user_text})
-        history.append({"role": "assistant", "content": assistant_text})
-        # Keep the latest N turns (2 messages per turn).
-        max_messages = max(2, TELEGRAM_MAX_HISTORY * 2)
-        if len(history) > max_messages:
-            chat_histories[chat_id] = history[-max_messages:]
+    now = time.time()
+    max_messages = max(2, TELEGRAM_MAX_HISTORY * 2)
+    chat_key = str(chat_id)
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO telegram_chat_history(chat_id, role, content, created_at)
+            VALUES (?, 'user', ?, ?)
+            """,
+            (chat_key, user_text, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO telegram_chat_history(chat_id, role, content, created_at)
+            VALUES (?, 'assistant', ?, ?)
+            """,
+            (chat_key, assistant_text, now),
+        )
+        conn.execute(
+            """
+            DELETE FROM telegram_chat_history
+            WHERE chat_id = ?
+              AND id NOT IN (
+                SELECT id
+                FROM telegram_chat_history
+                WHERE chat_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+              )
+            """,
+            (chat_key, chat_key, max_messages),
+        )
 
 
 def chunk_telegram_text(text, chunk_size=4000):

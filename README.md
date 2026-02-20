@@ -30,6 +30,7 @@ Project ini sudah siap deploy menggunakan `Dockerfile`.
    - `TELEGRAM_MAX_HISTORY` (opsional, default: `10`)
    - `TELEGRAM_RATE_LIMIT_COUNT` (opsional, default: `5`)
    - `TELEGRAM_RATE_LIMIT_WINDOW` (opsional, default: `60` detik)
+   - `TELEGRAM_MEMORY_DB_PATH` (opsional, default: `telegram_memory.db`)
 5. Port otomatis pakai `PORT` dari Koyeb.
 6. Health check endpoint: `/healthz`.
 
@@ -60,3 +61,8 @@ Perintah bot Telegram:
 - `/help` atau `/start` -> bantuan
 - `/reset` -> reset memori chat
 - `/stats` -> statistik penggunaan bot
+
+Catatan memori Telegram:
+
+- Riwayat chat Telegram disimpan di SQLite (`TELEGRAM_MEMORY_DB_PATH`).
+- Jika container di-restart/deploy ulang tanpa storage persisten, data bisa hilang.
