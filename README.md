@@ -26,6 +26,10 @@ Project ini sudah siap deploy menggunakan `Dockerfile`.
    - `GROQ_MODEL` (opsional, default: `openai/gpt-oss-120b`)
    - `TELEGRAM_BOT_TOKEN` (opsional, untuk fitur bot Telegram)
    - `TELEGRAM_WEBHOOK_SECRET` (opsional, untuk webhook Telegram)
+   - `TELEGRAM_ALLOWED_CHAT_IDS` (opsional, whitelist chat id dipisah koma, contoh: `12345,67890`)
+   - `TELEGRAM_MAX_HISTORY` (opsional, default: `10`)
+   - `TELEGRAM_RATE_LIMIT_COUNT` (opsional, default: `5`)
+   - `TELEGRAM_RATE_LIMIT_WINDOW` (opsional, default: `60` detik)
 5. Port otomatis pakai `PORT` dari Koyeb.
 6. Health check endpoint: `/healthz`.
 
@@ -50,3 +54,9 @@ Cek status webhook:
 ```text
 https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/getWebhookInfo
 ```
+
+Perintah bot Telegram:
+
+- `/help` atau `/start` -> bantuan
+- `/reset` -> reset memori chat
+- `/stats` -> statistik penggunaan bot

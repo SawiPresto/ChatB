@@ -19,9 +19,16 @@ DEFAULT_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 TELEGRAM_MAX_HISTORY = int(os.getenv("TELEGRAM_MAX_HISTORY", "10"))
 TELEGRAM_RATE_LIMIT_COUNT = int(os.getenv("TELEGRAM_RATE_LIMIT_COUNT", "5"))
 TELEGRAM_RATE_LIMIT_WINDOW = int(os.getenv("TELEGRAM_RATE_LIMIT_WINDOW", "60"))
+APP_STARTED_AT = time.time()
 
 chat_histories = defaultdict(list)
 rate_limit_hits = defaultdict(deque)
+stats_store = {
+    "telegram_requests_total": 0,
+    "telegram_errors_total": 0,
+    "telegram_messages_total": 0,
+    "telegram_unique_chats": set(),
+}
 store_lock = Lock()
 
 
@@ -31,6 +38,22 @@ def get_telegram_token():
 
 def get_webhook_secret():
     return os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip()
+
+
+def get_allowed_chat_ids():
+    raw = os.getenv("TELEGRAM_ALLOWED_CHAT_IDS", "").strip()
+    if not raw:
+        return None
+    allowed = set()
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            allowed.add(int(item))
+        except ValueError:
+            logger.warning("TELEGRAM_ALLOWED_CHAT_IDS mengandung nilai tidak valid: %s", item)
+    return allowed if allowed else None
 
 
 def get_groq_client():
@@ -69,6 +92,35 @@ def is_rate_limited(chat_id):
             return True
         entries.append(now)
         return False
+
+
+def register_telegram_request(chat_id):
+    with store_lock:
+        stats_store["telegram_requests_total"] += 1
+        stats_store["telegram_unique_chats"].add(chat_id)
+
+
+def register_telegram_message():
+    with store_lock:
+        stats_store["telegram_messages_total"] += 1
+
+
+def register_telegram_error():
+    with store_lock:
+        stats_store["telegram_errors_total"] += 1
+
+
+def get_telegram_stats_summary():
+    uptime_seconds = int(time.time() - APP_STARTED_AT)
+    with store_lock:
+        return (
+            "Statistik Bot:\n"
+            f"- Uptime: {uptime_seconds}s\n"
+            f"- Total request webhook: {stats_store['telegram_requests_total']}\n"
+            f"- Total pesan diproses: {stats_store['telegram_messages_total']}\n"
+            f"- Total error: {stats_store['telegram_errors_total']}\n"
+            f"- Total chat unik: {len(stats_store['telegram_unique_chats'])}"
+        )
 
 
 def reset_chat_history(chat_id):
@@ -197,10 +249,12 @@ def healthz():
 
 @app.route('/debug/env', methods=['GET'])
 def debug_env():
+    allowed_chat_ids = get_allowed_chat_ids()
     return jsonify({
         "has_groq_api_key": bool(os.getenv("GROQ_API_KEY")),
         "has_telegram_bot_token": bool(get_telegram_token()),
         "has_telegram_webhook_secret": bool(get_webhook_secret()),
+        "telegram_allowed_chat_ids_count": 0 if allowed_chat_ids is None else len(allowed_chat_ids),
         "groq_model": os.getenv("GROQ_MODEL", DEFAULT_MODEL),
     }), 200
 
@@ -239,6 +293,22 @@ def telegram_webhook(secret):
     text = (message.get("text") or "").strip()
     if not chat_id:
         return jsonify({"ok": True, "ignored": "no_chat_id"}), 200
+    register_telegram_request(chat_id)
+
+    allowed_chat_ids = get_allowed_chat_ids()
+    if allowed_chat_ids is not None and int(chat_id) not in allowed_chat_ids:
+        try:
+            send_telegram_message(
+                chat_id=chat_id,
+                text="Maaf, chat ini belum diizinkan menggunakan bot.",
+            )
+        except (HTTPError, URLError, RuntimeError):
+            register_telegram_error()
+            logger.exception("Error saat mengirim balasan unauthorized chat Telegram")
+        return jsonify({"ok": True, "ignored": "unauthorized_chat"}), 200
+
+    if text:
+        register_telegram_message()
 
     cmd = normalize_telegram_command(text)
     if cmd == "/help" or cmd == "/start":
@@ -246,12 +316,14 @@ def telegram_webhook(secret):
             "Halo! Kirim pertanyaanmu dan saya akan jawab.\n"
             "Perintah:\n"
             "/help - Tampilkan bantuan\n"
-            "/reset - Hapus riwayat percakapan"
+            "/reset - Hapus riwayat percakapan\n"
+            "/stats - Lihat statistik bot"
         )
         try:
             send_telegram_message(chat_id=chat_id, text=reply_text)
             return jsonify({"ok": True}), 200
         except (HTTPError, URLError, RuntimeError) as exc:
+            register_telegram_error()
             logger.exception("Error saat mengirim balasan command Telegram")
             return jsonify({"ok": False, "error": str(exc)}), 200
 
@@ -261,6 +333,16 @@ def telegram_webhook(secret):
             send_telegram_message(chat_id=chat_id, text="Riwayat percakapan sudah direset.")
             return jsonify({"ok": True}), 200
         except (HTTPError, URLError, RuntimeError) as exc:
+            register_telegram_error()
+            logger.exception("Error saat mengirim balasan command Telegram")
+            return jsonify({"ok": False, "error": str(exc)}), 200
+
+    if cmd == "/stats":
+        try:
+            send_telegram_message(chat_id=chat_id, text=get_telegram_stats_summary())
+            return jsonify({"ok": True}), 200
+        except (HTTPError, URLError, RuntimeError) as exc:
+            register_telegram_error()
             logger.exception("Error saat mengirim balasan command Telegram")
             return jsonify({"ok": False, "error": str(exc)}), 200
 
@@ -272,6 +354,7 @@ def telegram_webhook(secret):
             )
             return jsonify({"ok": True, "rate_limited": True}), 200
         except (HTTPError, URLError, RuntimeError) as exc:
+            register_telegram_error()
             logger.exception("Error saat mengirim balasan rate-limit Telegram")
             return jsonify({"ok": False, "error": str(exc)}), 200
 
@@ -286,6 +369,7 @@ def telegram_webhook(secret):
             )
             store_history_turn(chat_id, text, reply_text)
         except Exception as exc:
+            register_telegram_error()
             logger.exception("Error saat memproses request Telegram ke Groq")
             reply_text = f"Maaf, terjadi error saat memproses pesan: {exc}"
 
@@ -293,6 +377,7 @@ def telegram_webhook(secret):
         send_telegram_message(chat_id=chat_id, text=reply_text)
         return jsonify({"ok": True}), 200
     except (HTTPError, URLError, RuntimeError) as exc:
+        register_telegram_error()
         logger.exception("Error saat mengirim balasan ke Telegram")
         return jsonify({"ok": False, "error": str(exc)}), 200
 
