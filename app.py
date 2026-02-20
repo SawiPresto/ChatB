@@ -27,6 +27,10 @@ TELEGRAM_RATE_LIMIT_COUNT = int(os.getenv("TELEGRAM_RATE_LIMIT_COUNT", "5"))
 TELEGRAM_RATE_LIMIT_WINDOW = int(os.getenv("TELEGRAM_RATE_LIMIT_WINDOW", "60"))
 TELEGRAM_MEMORY_DB_PATH = os.getenv("TELEGRAM_MEMORY_DB_PATH", "telegram_memory.db")
 TELEGRAM_DAILY_QUOTA = int(os.getenv("TELEGRAM_DAILY_QUOTA", "0"))
+TELEGRAM_SEND_RETRY_COUNT = max(1, int(os.getenv("TELEGRAM_SEND_RETRY_COUNT", "3")))
+TELEGRAM_SEND_RETRY_DELAY_SECONDS = float(
+    os.getenv("TELEGRAM_SEND_RETRY_DELAY_SECONDS", "1.0")
+)
 APP_STARTED_AT = time.time()
 runtime_config = {"model": DEFAULT_MODEL}
 
@@ -488,8 +492,31 @@ def _send_telegram_payload(url, payload):
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib_request.urlopen(req, timeout=15):
-        pass
+    last_exc = None
+    for attempt in range(1, TELEGRAM_SEND_RETRY_COUNT + 1):
+        try:
+            with urllib_request.urlopen(req, timeout=15):
+                return
+        except HTTPError as exc:
+            # Permanent errors (eg. bad payload/unauthorized) should fail fast.
+            if exc.code < 500 and exc.code != 429:
+                raise
+            last_exc = exc
+        except URLError as exc:
+            last_exc = exc
+
+        if attempt < TELEGRAM_SEND_RETRY_COUNT:
+            delay = TELEGRAM_SEND_RETRY_DELAY_SECONDS * attempt
+            logger.warning(
+                "Gagal kirim ke Telegram, retry %s/%s dalam %.1fs",
+                attempt,
+                TELEGRAM_SEND_RETRY_COUNT,
+                delay,
+            )
+            time.sleep(delay)
+
+    if last_exc:
+        raise last_exc
 
 
 def send_telegram_message(chat_id, text):
