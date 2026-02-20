@@ -17,6 +17,7 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 DEFAULT_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+FALLBACK_MODEL = os.getenv("GROQ_FALLBACK_MODEL", "llama-3.1-8b-instant")
 SYSTEM_PROMPT = os.getenv(
     "SYSTEM_PROMPT",
     "Kamu adalah asisten AI bernama SawiPresto. "
@@ -232,8 +233,19 @@ def generate_chat_response(messages, model=DEFAULT_MODEL):
         raise RuntimeError("GROQ_API_KEY belum diset di environment server.")
 
     all_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + list(messages)
-    chat_completion = groq_client.chat.completions.create(messages=all_messages, model=model)
-    return chat_completion.choices[0].message.content
+    try:
+        chat_completion = groq_client.chat.completions.create(messages=all_messages, model=model)
+        return chat_completion.choices[0].message.content
+    except Exception as exc:
+        # Auto-fallback when primary model is rate-limited.
+        if exc.__class__.__name__ == "RateLimitError" and FALLBACK_MODEL and model != FALLBACK_MODEL:
+            logger.warning("Model %s kena rate limit, fallback ke %s", model, FALLBACK_MODEL)
+            chat_completion = groq_client.chat.completions.create(
+                messages=all_messages,
+                model=FALLBACK_MODEL,
+            )
+            return chat_completion.choices[0].message.content
+        raise
 
 
 def normalize_telegram_command(text):
@@ -527,9 +539,22 @@ def format_text_for_telegram(text):
         return ""
 
     normalized = normalize_markdown_tables(text)
-    output = html.escape(str(normalized))
-    output = re.sub(r"```([\s\S]*?)```", lambda m: f"<pre>{m.group(1).strip()}</pre>", output)
-    output = re.sub(r"`([^`]+)`", r"<code>\1</code>", output)
+    source = str(normalized)
+    protected = {}
+
+    def protect_fenced_code(match):
+        token = f"@@CODEBLOCK_{len(protected)}@@"
+        protected[token] = f"<pre>{html.escape(match.group(1).strip())}</pre>"
+        return token
+
+    def protect_inline_code(match):
+        token = f"@@INLINECODE_{len(protected)}@@"
+        protected[token] = f"<code>{html.escape(match.group(1))}</code>"
+        return token
+
+    source = re.sub(r"```([\s\S]*?)```", protect_fenced_code, source)
+    source = re.sub(r"`([^`]+)`", protect_inline_code, source)
+    output = html.escape(source)
     output = re.sub(r"\*\*([^*\n]+)\*\*", r"<b>\1</b>", output)
     output = re.sub(r"__([^_\n]+)__", r"<b>\1</b>", output)
     output = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"<i>\1</i>", output)
@@ -540,6 +565,8 @@ def format_text_for_telegram(text):
         r'<a href="\2">\1</a>',
         output,
     )
+    for token, replacement in protected.items():
+        output = output.replace(token, replacement)
     return output.strip()
 
 
@@ -877,9 +904,20 @@ def process_telegram_message(message):
                 reply_text = generate_chat_response(messages=messages, model=get_runtime_model())
                 store_history_turn(chat_id, text, reply_text)
             except Exception as exc:
-                register_telegram_error()
-                logger.exception("Error saat memproses request Telegram ke Groq")
-                reply_text = f"Maaf, terjadi error saat memproses pesan: {exc}"
+                if exc.__class__.__name__ == "RateLimitError":
+                    register_telegram_error()
+                    wait_time = ""
+                    match = re.search(r"try again in ([^.\n]+)", str(exc), flags=re.IGNORECASE)
+                    if match:
+                        wait_time = f" Coba lagi dalam {match.group(1).strip()}."
+                    reply_text = (
+                        "Layanan AI sedang mencapai batas kuota sementara."
+                        f"{wait_time} Saya masih bisa lanjut setelah kuota tersedia."
+                    )
+                else:
+                    register_telegram_error()
+                    logger.exception("Error saat memproses request Telegram ke Groq")
+                    reply_text = f"Maaf, terjadi error saat memproses pesan: {exc}"
 
         send_telegram_message(chat_id=chat_id, text=reply_text)
     except (HTTPError, URLError, RuntimeError):
