@@ -591,9 +591,6 @@ def process_telegram_message(message):
             send_telegram_message(chat_id=chat_id, text=f"Kuota harian habis ({usage}/{limit}). Coba lagi besok.")
             return
 
-        # Inform quickly so user knows request is being processed.
-        send_telegram_message(chat_id=chat_id, text="Pesan diterima, sedang diproses...")
-
         if not text:
             reply_text = "Kirim pesan teks ya, nanti saya bantu jawab."
         else:
