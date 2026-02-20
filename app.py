@@ -84,19 +84,6 @@ def init_memory_store():
             )
             """
         )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS telegram_feedback (
-                chat_id TEXT NOT NULL,
-                message_id INTEGER NOT NULL,
-                user_id TEXT NOT NULL,
-                rating TEXT NOT NULL,
-                created_at REAL NOT NULL,
-                updated_at REAL NOT NULL,
-                PRIMARY KEY(chat_id, message_id, user_id)
-            )
-            """
-        )
 
 
 init_memory_store()
@@ -278,47 +265,6 @@ def get_telegram_stats_summary():
         )
 
 
-def get_feedback_stats_summary():
-    now = time.time()
-    since = now - 86400
-    with get_db_connection() as conn:
-        total_up = conn.execute(
-            "SELECT COUNT(*) FROM telegram_feedback WHERE rating = 'up'"
-        ).fetchone()[0]
-        total_down = conn.execute(
-            "SELECT COUNT(*) FROM telegram_feedback WHERE rating = 'down'"
-        ).fetchone()[0]
-        recent_up = conn.execute(
-            "SELECT COUNT(*) FROM telegram_feedback WHERE rating = 'up' AND updated_at >= ?",
-            (since,),
-        ).fetchone()[0]
-        recent_down = conn.execute(
-            "SELECT COUNT(*) FROM telegram_feedback WHERE rating = 'down' AND updated_at >= ?",
-            (since,),
-        ).fetchone()[0]
-    return (
-        "Feedback Bot:\n"
-        f"- Total 👍: {total_up}\n"
-        f"- Total 👎: {total_down}\n"
-        f"- 24 jam 👍: {recent_up}\n"
-        f"- 24 jam 👎: {recent_down}"
-    )
-
-
-def store_feedback(chat_id, message_id, user_id, rating):
-    now = time.time()
-    with get_db_connection() as conn:
-        conn.execute(
-            """
-            INSERT INTO telegram_feedback(chat_id, message_id, user_id, rating, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(chat_id, message_id, user_id)
-            DO UPDATE SET rating=excluded.rating, updated_at=excluded.updated_at
-            """,
-            (str(chat_id), int(message_id), str(user_id), rating, now, now),
-        )
-
-
 def check_and_increment_daily_quota(chat_id):
     if TELEGRAM_DAILY_QUOTA <= 0:
         return True, 0, 0
@@ -466,24 +412,7 @@ def _send_telegram_payload(url, payload):
         pass
 
 
-def call_telegram_api(method, payload):
-    token = get_telegram_token()
-    if not token:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN belum diset di environment server.")
-    url = f"https://api.telegram.org/bot{token}/{method}"
-    _send_telegram_payload(url, payload)
-
-
-def build_feedback_markup():
-    return {
-        "inline_keyboard": [[
-            {"text": "👍", "callback_data": "fb:up"},
-            {"text": "👎", "callback_data": "fb:down"},
-        ]]
-    }
-
-
-def send_telegram_message(chat_id, text, with_feedback=False):
+def send_telegram_message(chat_id, text):
     token = get_telegram_token()
     if not token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN belum diset di environment server.")
@@ -493,10 +422,8 @@ def send_telegram_message(chat_id, text, with_feedback=False):
     plain_chunks = chunk_telegram_text(plain_text_for_telegram(text))
     html_failed = False
 
-    for i, chunk in enumerate(html_chunks):
+    for chunk in html_chunks:
         payload = {"chat_id": chat_id, "text": chunk, "parse_mode": "HTML"}
-        if with_feedback and i == len(html_chunks) - 1:
-            payload["reply_markup"] = build_feedback_markup()
         try:
             _send_telegram_payload(url, payload)
         except HTTPError as exc:
@@ -516,19 +443,8 @@ def send_telegram_message(chat_id, text, with_feedback=False):
 
     # Fallback plain text when HTML parsing fails on Telegram side.
     if html_failed:
-        for i, chunk in enumerate(plain_chunks):
-            payload = {"chat_id": chat_id, "text": chunk}
-            if with_feedback and i == len(plain_chunks) - 1:
-                payload["reply_markup"] = build_feedback_markup()
-            _send_telegram_payload(url, payload)
-
-
-def answer_callback_query(callback_query_id, text=None):
-    payload = {"callback_query_id": callback_query_id}
-    if text:
-        payload["text"] = text
-        payload["show_alert"] = False
-    call_telegram_api("answerCallbackQuery", payload)
+        for chunk in plain_chunks:
+            _send_telegram_payload(url, {"chat_id": chat_id, "text": chunk})
 
 
 @app.route('/')
@@ -585,34 +501,6 @@ def telegram_webhook(secret):
             return jsonify({"error": "Forbidden"}), 403
 
     update = request.get_json(silent=True) or {}
-    callback_query = update.get("callback_query")
-    if callback_query:
-        callback_id = callback_query.get("id")
-        data = (callback_query.get("data") or "").strip()
-        from_user = callback_query.get("from") or {}
-        user_id = from_user.get("id")
-        message_obj = callback_query.get("message") or {}
-        chat_obj = message_obj.get("chat") or {}
-        feedback_chat_id = chat_obj.get("id")
-        feedback_message_id = message_obj.get("message_id")
-
-        if callback_id:
-            try:
-                if data in {"fb:up", "fb:down"} and feedback_chat_id and feedback_message_id and user_id:
-                    rating = "up" if data == "fb:up" else "down"
-                    store_feedback(feedback_chat_id, feedback_message_id, user_id, rating)
-                    answer_callback_query(callback_id, "Feedback tersimpan. Terima kasih.")
-                else:
-                    answer_callback_query(callback_id, "Feedback tidak valid.")
-            except Exception:
-                register_telegram_error()
-                logger.exception("Error saat memproses feedback callback Telegram")
-                try:
-                    answer_callback_query(callback_id, "Gagal menyimpan feedback.")
-                except Exception:
-                    pass
-        return jsonify({"ok": True, "handled": "callback_query"}), 200
-
     message = update.get("message") or update.get("edited_message")
     if not message:
         return jsonify({"ok": True, "ignored": "no_message"}), 200
@@ -648,30 +536,12 @@ def telegram_webhook(secret):
             "/help - Tampilkan bantuan\n"
             "/reset - Hapus riwayat percakapan\n"
             "/stats - Lihat statistik bot\n"
-            "/feedbackstats - Lihat statistik feedback (admin)\n"
             "/setmodel <model> - Ubah model (admin)\n"
             "/allow <chat_id> - Izinkan chat id (admin)\n"
             "/deny <chat_id> - Blok chat id (admin)"
         )
         try:
             send_telegram_message(chat_id=chat_id, text=reply_text)
-            return jsonify({"ok": True}), 200
-        except (HTTPError, URLError, RuntimeError) as exc:
-            register_telegram_error()
-            logger.exception("Error saat mengirim balasan command Telegram")
-            return jsonify({"ok": False, "error": str(exc)}), 200
-
-    if cmd == "/feedbackstats":
-        if not is_admin:
-            try:
-                send_telegram_message(chat_id=chat_id, text="Command ini hanya untuk admin.")
-                return jsonify({"ok": True, "ignored": "not_admin"}), 200
-            except (HTTPError, URLError, RuntimeError) as exc:
-                register_telegram_error()
-                logger.exception("Error saat mengirim balasan command Telegram")
-                return jsonify({"ok": False, "error": str(exc)}), 200
-        try:
-            send_telegram_message(chat_id=chat_id, text=get_feedback_stats_summary())
             return jsonify({"ok": True}), 200
         except (HTTPError, URLError, RuntimeError) as exc:
             register_telegram_error()
@@ -806,7 +676,7 @@ def telegram_webhook(secret):
             reply_text = f"Maaf, terjadi error saat memproses pesan: {exc}"
 
     try:
-        send_telegram_message(chat_id=chat_id, text=reply_text, with_feedback=True)
+        send_telegram_message(chat_id=chat_id, text=reply_text)
         return jsonify({"ok": True}), 200
     except (HTTPError, URLError, RuntimeError) as exc:
         register_telegram_error()

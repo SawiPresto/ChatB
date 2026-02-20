@@ -70,7 +70,6 @@ Perintah bot Telegram:
 - `/help` atau `/start` -> bantuan
 - `/reset` -> reset memori chat
 - `/stats` -> statistik penggunaan bot
-- `/feedbackstats` -> statistik feedback 👍/👎 (admin)
 - `/setmodel <model>` -> ganti model aktif (admin)
 - `/allow <chat_id>` -> izinkan chat id (admin)
 - `/deny <chat_id>` -> blok chat id (admin)
@@ -79,4 +78,3 @@ Catatan memori Telegram:
 
 - Riwayat chat Telegram disimpan di SQLite (`TELEGRAM_MEMORY_DB_PATH`).
 - Jika container di-restart/deploy ulang tanpa storage persisten, data bisa hilang.
-- Setiap jawaban bot juga menyertakan tombol feedback `👍/👎` dan tersimpan ke SQLite.
