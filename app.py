@@ -17,6 +17,11 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 DEFAULT_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+SYSTEM_PROMPT = os.getenv(
+    "SYSTEM_PROMPT",
+    "Kamu adalah asisten AI bernama SawiPresto. "
+    "Saat ditanya nama, jawab bahwa namamu SawiPresto.",
+)
 TELEGRAM_MAX_HISTORY = int(os.getenv("TELEGRAM_MAX_HISTORY", "10"))
 TELEGRAM_RATE_LIMIT_COUNT = int(os.getenv("TELEGRAM_RATE_LIMIT_COUNT", "5"))
 TELEGRAM_RATE_LIMIT_WINDOW = int(os.getenv("TELEGRAM_RATE_LIMIT_WINDOW", "60"))
@@ -209,7 +214,8 @@ def generate_chat_response(messages, model=DEFAULT_MODEL):
     if groq_client is None:
         raise RuntimeError("GROQ_API_KEY belum diset di environment server.")
 
-    chat_completion = groq_client.chat.completions.create(messages=messages, model=model)
+    all_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + list(messages)
+    chat_completion = groq_client.chat.completions.create(messages=all_messages, model=model)
     return chat_completion.choices[0].message.content
 
 
