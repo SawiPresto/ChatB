@@ -369,12 +369,85 @@ def chunk_telegram_text(text, chunk_size=4000):
     return [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
 
 
+def _split_markdown_table_row(line):
+    stripped = line.strip()
+    if stripped.startswith("|"):
+        stripped = stripped[1:]
+    if stripped.endswith("|"):
+        stripped = stripped[:-1]
+    return [cell.strip() for cell in stripped.split("|")]
+
+
+def _is_markdown_table_separator(line):
+    cells = _split_markdown_table_row(line)
+    if not cells:
+        return False
+    for cell in cells:
+        if not re.fullmatch(r":?-{3,}:?", cell):
+            return False
+    return True
+
+
+def _render_markdown_table_block(table_lines):
+    rows = []
+    for line in table_lines:
+        if _is_markdown_table_separator(line):
+            continue
+        rows.append(_split_markdown_table_row(line))
+
+    if not rows:
+        return "\n".join(table_lines)
+
+    col_count = max(len(row) for row in rows)
+    normalized_rows = [row + [""] * (col_count - len(row)) for row in rows]
+    widths = []
+    for idx in range(col_count):
+        widths.append(max(len(row[idx]) for row in normalized_rows))
+
+    def fmt_row(row):
+        cols = [row[idx].ljust(widths[idx]) for idx in range(col_count)]
+        return "| " + " | ".join(cols) + " |"
+
+    header = fmt_row(normalized_rows[0])
+    separator = "| " + " | ".join("-" * w for w in widths) + " |"
+    body = [fmt_row(row) for row in normalized_rows[1:]]
+    table_text = "\n".join([header, separator] + body)
+    return f"```\n{table_text}\n```"
+
+
+def normalize_markdown_tables(text):
+    if text is None:
+        return ""
+    lines = str(text).splitlines()
+    if not lines:
+        return str(text)
+
+    output_lines = []
+    i = 0
+    total = len(lines)
+    while i < total:
+        if i + 1 < total and "|" in lines[i] and _is_markdown_table_separator(lines[i + 1]):
+            table_block = [lines[i], lines[i + 1]]
+            i += 2
+            while i < total and lines[i].strip() and "|" in lines[i]:
+                table_block.append(lines[i])
+                i += 1
+            output_lines.append(_render_markdown_table_block(table_block))
+            continue
+
+        output_lines.append(lines[i])
+        i += 1
+
+    return "\n".join(output_lines)
+
+
 def format_text_for_telegram(text):
     """Convert common markdown markers to Telegram HTML format."""
     if text is None:
         return ""
 
-    output = html.escape(str(text))
+    normalized = normalize_markdown_tables(text)
+    output = html.escape(str(normalized))
     output = re.sub(r"```([\s\S]*?)```", lambda m: f"<pre>{m.group(1).strip()}</pre>", output)
     output = re.sub(r"`([^`]+)`", r"<code>\1</code>", output)
     output = re.sub(r"\*\*([^*\n]+)\*\*", r"<b>\1</b>", output)
@@ -393,7 +466,7 @@ def format_text_for_telegram(text):
 def plain_text_for_telegram(text):
     if text is None:
         return "..."
-    output = str(text)
+    output = normalize_markdown_tables(text)
     output = re.sub(r"```([\s\S]*?)```", r"\1", output)
     output = re.sub(r"`([^`]+)`", r"\1", output)
     output = re.sub(r"\*\*([^*\n]+)\*\*", r"\1", output)
