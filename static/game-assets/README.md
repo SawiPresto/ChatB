@@ -9,6 +9,16 @@ Suggested files
 - characters/sawipresto-base.png
 - backgrounds/forest-battle.webp
 - enemies/enemy-scout.png
+- enemies/gadget-gobbler.png
+- enemies/bomber-beetle.png
+- enemies/bush-bandit.png
+- enemies/bamboo-bruiser.png
+- enemies/fungus-sorcerer.png
+- enemies/swamp-crusher.png
+- enemies/root-golem.png
+- enemies/poison-sentinel.png
+- enemies/robo-king.png
+- enemies/mega-monstro.png
 - weapons/bamboo-spear.png
 - weapons/shadow-blade.png
 - weapons/quantum-cleaver.png

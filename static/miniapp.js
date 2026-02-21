@@ -15,6 +15,10 @@
         energyBar: document.getElementById("energy-bar"),
         tap: document.getElementById("tap-value"),
         tapBar: document.getElementById("tap-bar"),
+        enemyName: document.getElementById("enemy-name"),
+        enemyLevel: document.getElementById("enemy-level"),
+        enemyHpBar: document.getElementById("enemy-hp-bar"),
+        enemyHpValue: document.getElementById("enemy-hp-value"),
         weaponSlot: document.getElementById("weapon-slot"),
         petSlot: document.getElementById("pet-slot"),
         skinSlot: document.getElementById("skin-slot"),
@@ -78,7 +82,8 @@
             els.sceneBg.style.backgroundImage =
                 "radial-gradient(circle at 50% 30%, #2e7d32, #0b3a22 55%, #082116)";
         }
-        setImg(els.enemyBaseImg, state.config.enemy_base_asset || "", els.enemyFallback);
+        const initialEnemyAsset = state.config.enemy_base_asset || "";
+        setImg(els.enemyBaseImg, initialEnemyAsset, els.enemyFallback);
     }
 
     function spawnDamage(value) {
@@ -139,6 +144,20 @@
         els.energyBar.style.width = `${energyPercent}%`;
         const tapPercent = Math.max(8, Math.min(100, effectiveTap * 4));
         els.tapBar.style.width = `${tapPercent}%`;
+
+        const enemy = gameState.enemy || {};
+        const enemyHp = Number(enemy.hp || 0);
+        const enemyMaxHp = Number(enemy.max_hp || 1);
+        const enemyPct = Math.max(0, Math.min(100, (enemyHp / Math.max(1, enemyMaxHp)) * 100));
+        els.enemyName.textContent = enemy.name || "Enemy";
+        els.enemyLevel.textContent = String(enemy.level || 1);
+        els.enemyHpValue.textContent = `${enemyHp}/${enemyMaxHp}`;
+        els.enemyHpBar.style.width = `${enemyPct}%`;
+        setImg(
+            els.enemyBaseImg,
+            enemy.asset || state.config.enemy_base_asset || "",
+            els.enemyFallback
+        );
 
         els.weaponSlot.textContent = getEquipmentName(gameState.equipment && gameState.equipment.weapon);
         els.petSlot.textContent = getEquipmentName(gameState.equipment && gameState.equipment.pet);
@@ -232,8 +251,16 @@
             applyState(data.state);
             renderShop();
             if (data.tapped) {
-                triggerAttackFx(data.gained);
-                setStatus(`Critical slash! +${data.gained} coin`);
+                triggerAttackFx(data.damage || data.gained);
+                if (data.enemy_defeated) {
+                    const enemyInfo = data.state && data.state.enemy ? data.state.enemy : null;
+                    const levelInfo = data.enemy_level_up && enemyInfo
+                        ? ` Musuh baru: ${enemyInfo.name} (Lv ${enemyInfo.level}).`
+                        : " Boss terakhir respawn lagi.";
+                    setStatus(`Enemy down! +${data.gained} coin.${levelInfo}`);
+                } else {
+                    setStatus(`Critical slash! ${data.damage} dmg, +${data.gained} coin`);
+                }
             } else {
                 setStatus("Energy habis atau tap terlalu cepat.");
             }
