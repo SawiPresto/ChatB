@@ -1428,6 +1428,24 @@ def answer_pre_checkout_query(pre_checkout_query_id, ok=True, error_message=None
     telegram_api_call("answerPreCheckoutQuery", payload)
 
 
+def answer_callback_query(callback_query_id, text=None):
+    payload = {"callback_query_id": callback_query_id}
+    if text:
+        payload["text"] = text
+    telegram_api_call("answerCallbackQuery", payload)
+
+
+def build_start_menu_keyboard():
+    app_base_url = get_app_base_url()
+    buttons = []
+    if app_base_url:
+        buttons.append(
+            [{"text": "Buka Mini App Game", "web_app": {"url": f"{app_base_url}/miniapp"}}]
+        )
+    buttons.append([{"text": "Lanjut Chat AI SawiPresto", "callback_data": "continue_chat"}])
+    return {"inline_keyboard": buttons}
+
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -1671,6 +1689,11 @@ def telegram_webhook(secret):
                 logger.exception("Error saat answerPreCheckoutQuery")
         return jsonify({"ok": True, "accepted": "pre_checkout"}), 200
 
+    callback_query = update.get("callback_query")
+    if callback_query:
+        Thread(target=process_telegram_callback_query, args=(callback_query,), daemon=True).start()
+        return jsonify({"ok": True, "accepted": "callback_query"}), 200
+
     message = update.get("message") or update.get("edited_message")
     if not message:
         return jsonify({"ok": True, "ignored": "no_message"}), 200
@@ -1724,7 +1747,18 @@ def process_telegram_message(message):
             register_telegram_message()
 
         cmd = normalize_telegram_command(text)
-        if cmd in {"/help", "/start"}:
+        if cmd == "/start":
+            send_telegram_message(
+                chat_id=chat_id,
+                text=(
+                    "Selamat datang di SawiPresto.\n"
+                    "Pilih mode yang kamu mau:"
+                ),
+                extra_payload={"reply_markup": build_start_menu_keyboard()},
+            )
+            return
+
+        if cmd == "/help":
             reply_text = (
                 "Halo! Kirim pertanyaanmu dan saya akan jawab.\n"
                 "Perintah:\n"
@@ -1901,6 +1935,40 @@ def process_telegram_message(message):
     except Exception:
         register_telegram_error()
         logger.exception("Unexpected error saat memproses background Telegram message")
+
+
+def process_telegram_callback_query(callback_query):
+    try:
+        callback_id = callback_query.get("id")
+        data = str(callback_query.get("data") or "").strip()
+        message = callback_query.get("message") or {}
+        chat = message.get("chat") or {}
+        chat_id = chat.get("id")
+
+        if callback_id:
+            try:
+                answer_callback_query(callback_id)
+            except Exception:
+                logger.exception("Gagal answer callback query")
+
+        if not chat_id:
+            return
+        if not is_chat_allowed(chat_id):
+            send_telegram_message(chat_id=chat_id, text="Maaf, chat ini belum diizinkan menggunakan bot.")
+            return
+
+        if data == "continue_chat":
+            send_telegram_message(
+                chat_id=chat_id,
+                text=(
+                    "Mode chat AI aktif.\n"
+                    "Langsung kirim pertanyaanmu, saya bantu jawab."
+                ),
+            )
+            return
+    except Exception:
+        register_telegram_error()
+        logger.exception("Unexpected error saat memproses callback query Telegram")
 
 if __name__ == '__main__':
     port = int(os.getenv("PORT", "8000"))
