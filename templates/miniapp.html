@@ -12,21 +12,50 @@
 <body>
     <main class="app">
         <header class="panel hero">
-            <h1 id="game-title">{{ game_name }}</h1>
-            <p class="muted">Tap. Upgrade. Climb leaderboard.</p>
+            <div>
+                <h1 id="game-title">{{ game_name }}</h1>
+                <p class="muted">Cyber cabage rogue run. Build, gear, conquer.</p>
+            </div>
+            <div class="hero-badge">Mini App</div>
         </header>
 
-        <section class="panel stats">
-            <div><span class="label">Level</span><strong id="level-value">1</strong></div>
-            <div><span class="label">SawiCoin</span><strong id="coin-value">0</strong></div>
-            <div><span class="label">Tap Power</span><strong id="tap-value">1</strong></div>
-            <div><span class="label">Energy</span><strong id="energy-value">0/0</strong></div>
+        <section class="grid">
+            <div class="panel character-panel">
+                <h2>Karakter</h2>
+                <div class="character-stage">
+                    <div class="char-glow"></div>
+                    <div class="char-cat">
+                        <div class="cat-ears"></div>
+                        <div class="cat-face"></div>
+                        <div class="cat-weapon" id="weapon-visual"></div>
+                    </div>
+                </div>
+                <div class="loadout">
+                    <div><span>Weapon</span><strong id="weapon-slot">None</strong></div>
+                    <div><span>Pet</span><strong id="pet-slot">None</strong></div>
+                    <div><span>Skin</span><strong id="skin-slot">None</strong></div>
+                </div>
+            </div>
+
+            <div class="panel stats">
+                <h2>Stat</h2>
+                <div class="stat-list">
+                    <div><span class="label">Level</span><strong id="level-value">1</strong></div>
+                    <div><span class="label">SawiCoin</span><strong id="coin-value">0</strong></div>
+                    <div><span class="label">Tap Power</span><strong id="tap-value">1</strong></div>
+                    <div><span class="label">Energy</span><strong id="energy-value">0/0</strong></div>
+                </div>
+                <div class="actions">
+                    <button id="tap-btn" class="btn primary">Attack / Tap</button>
+                    <button id="upgrade-btn" class="btn">Level Upgrade</button>
+                    <button id="refresh-btn" class="btn ghost">Refresh</button>
+                </div>
+            </div>
         </section>
 
-        <section class="panel actions">
-            <button id="tap-btn" class="btn primary">TAP</button>
-            <button id="upgrade-btn" class="btn">Upgrade</button>
-            <button id="refresh-btn" class="btn ghost">Refresh</button>
+        <section class="panel">
+            <h2>Armory & Items</h2>
+            <div id="shop-grid" class="shop-grid"></div>
         </section>
 
         <section class="panel">

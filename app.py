@@ -58,6 +58,51 @@ stats_store = {
 }
 store_lock = Lock()
 
+GAME_SHOP_ITEMS = {
+    "weapon_bamboo_spear": {
+        "name": "Bamboo Spear",
+        "type": "weapon",
+        "price": 300,
+        "tap_bonus": 2,
+        "energy_bonus": 0,
+    },
+    "weapon_shadow_blade": {
+        "name": "Shadow Blade",
+        "type": "weapon",
+        "price": 1200,
+        "tap_bonus": 6,
+        "energy_bonus": 1,
+    },
+    "weapon_quantum_cleaver": {
+        "name": "Quantum Cleaver",
+        "type": "weapon",
+        "price": 4500,
+        "tap_bonus": 15,
+        "energy_bonus": 2,
+    },
+    "pet_neko_drone": {
+        "name": "Neko Drone",
+        "type": "pet",
+        "price": 800,
+        "tap_bonus": 3,
+        "energy_bonus": 0,
+    },
+    "pet_turbo_hammy": {
+        "name": "Turbo Hammy",
+        "type": "pet",
+        "price": 2200,
+        "tap_bonus": 8,
+        "energy_bonus": 2,
+    },
+    "skin_ronin": {
+        "name": "Ronin Jacket",
+        "type": "skin",
+        "price": 1500,
+        "tap_bonus": 2,
+        "energy_bonus": 3,
+    },
+}
+
 
 def get_db_connection():
     conn = sqlite3.connect(TELEGRAM_MEMORY_DB_PATH)
@@ -127,7 +172,11 @@ def init_memory_store():
                 max_energy INTEGER NOT NULL,
                 tap_power INTEGER NOT NULL,
                 level INTEGER NOT NULL,
-                updated_at REAL NOT NULL
+                updated_at REAL NOT NULL,
+                weapon_id TEXT NOT NULL DEFAULT '',
+                pet_id TEXT NOT NULL DEFAULT '',
+                skin_id TEXT NOT NULL DEFAULT '',
+                owned_items TEXT NOT NULL DEFAULT '[]'
             )
             """
         )
@@ -154,6 +203,20 @@ def init_memory_store():
 
 
 init_memory_store()
+
+
+def ensure_column_exists(table_name, column_name, definition):
+    with get_db_connection() as conn:
+        rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        existing = {row[1] for row in rows}
+        if column_name not in existing:
+            conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {definition}")
+
+
+ensure_column_exists("telegram_game_state", "weapon_id", "weapon_id TEXT NOT NULL DEFAULT ''")
+ensure_column_exists("telegram_game_state", "pet_id", "pet_id TEXT NOT NULL DEFAULT ''")
+ensure_column_exists("telegram_game_state", "skin_id", "skin_id TEXT NOT NULL DEFAULT ''")
+ensure_column_exists("telegram_game_state", "owned_items", "owned_items TEXT NOT NULL DEFAULT '[]'")
 
 
 def get_telegram_token():
@@ -518,8 +581,11 @@ def _ensure_game_state(chat_id):
     with get_db_connection() as conn:
         conn.execute(
             """
-            INSERT INTO telegram_game_state(chat_id, coins, energy, max_energy, tap_power, level, updated_at)
-            VALUES (?, 0, ?, ?, ?, 1, ?)
+            INSERT INTO telegram_game_state(
+                chat_id, coins, energy, max_energy, tap_power, level, updated_at,
+                weapon_id, pet_id, skin_id, owned_items
+            )
+            VALUES (?, 0, ?, ?, ?, 1, ?, '', '', '', '[]')
             ON CONFLICT(chat_id) DO NOTHING
             """,
             (
@@ -539,7 +605,7 @@ def _load_game_state(chat_id):
     with get_db_connection() as conn:
         row = conn.execute(
             """
-            SELECT coins, energy, max_energy, tap_power, level, updated_at
+            SELECT coins, energy, max_energy, tap_power, level, updated_at, weapon_id, pet_id, skin_id, owned_items
             FROM telegram_game_state
             WHERE chat_id = ?
             """,
@@ -548,7 +614,7 @@ def _load_game_state(chat_id):
         if not row:
             return None
 
-        coins, energy, max_energy, tap_power, level, updated_at = row
+        coins, energy, max_energy, tap_power, level, updated_at, weapon_id, pet_id, skin_id, owned_items = row
         elapsed = max(0.0, now - float(updated_at))
         regen_units = int(elapsed // GAME_ENERGY_REGEN_SECONDS)
         if regen_units > 0 and int(energy) < int(max_energy):
@@ -573,6 +639,10 @@ def _load_game_state(chat_id):
         "max_energy": int(max_energy),
         "tap_power": int(tap_power),
         "level": int(level),
+        "weapon_id": weapon_id or "",
+        "pet_id": pet_id or "",
+        "skin_id": skin_id or "",
+        "owned_items": _safe_owned_items(owned_items),
         "updated_at": float(updated_at),
     }
 
@@ -587,7 +657,70 @@ def _seconds_to_next_energy(state):
     return max(1, remain)
 
 
+def _safe_owned_items(raw):
+    try:
+        data = json.loads(raw or "[]")
+        if isinstance(data, list):
+            return [str(x) for x in data]
+    except Exception:
+        pass
+    return []
+
+
+def _get_item(item_id):
+    return GAME_SHOP_ITEMS.get(str(item_id))
+
+
+def _calculate_equipment_bonus(state):
+    total_tap_bonus = 0
+    total_energy_bonus = 0
+    for slot in ("weapon_id", "pet_id", "skin_id"):
+        item = _get_item(state.get(slot, ""))
+        if not item:
+            continue
+        total_tap_bonus += int(item.get("tap_bonus", 0))
+        total_energy_bonus += int(item.get("energy_bonus", 0))
+    return total_tap_bonus, total_energy_bonus
+
+
+def _effective_tap_power(state):
+    tap_bonus, _ = _calculate_equipment_bonus(state)
+    return int(state["tap_power"]) + tap_bonus
+
+
+def _effective_max_energy(state):
+    _, energy_bonus = _calculate_equipment_bonus(state)
+    return int(state["max_energy"]) + energy_bonus
+
+
+def _decorate_game_state(state):
+    if not state:
+        return state
+    owned_items = state.get("owned_items", [])
+    equipment = {
+        "weapon": _get_item(state.get("weapon_id", "")),
+        "pet": _get_item(state.get("pet_id", "")),
+        "skin": _get_item(state.get("skin_id", "")),
+    }
+    state["effective_tap_power"] = _effective_tap_power(state)
+    state["effective_max_energy"] = _effective_max_energy(state)
+    state["effective_energy"] = min(state["energy"], state["effective_max_energy"])
+    state["equipment"] = equipment
+    state["owned_items"] = [item for item in owned_items if item in GAME_SHOP_ITEMS]
+    return state
+
+
+def get_game_catalog():
+    items = []
+    for item_id, item in GAME_SHOP_ITEMS.items():
+        record = {"id": item_id}
+        record.update(item)
+        items.append(record)
+    return items
+
+
 def _format_game_status(state):
+    state = _decorate_game_state(state)
     next_energy = _seconds_to_next_energy(state)
     regen_line = "Energy penuh."
     if next_energy > 0:
@@ -596,8 +729,8 @@ def _format_game_status(state):
         f"{GAME_NAME}\n"
         f"Level: {state['level']}\n"
         f"SawiCoin: {state['coins']}\n"
-        f"Energy: {state['energy']}/{state['max_energy']} ({regen_line})\n"
-        f"Tap Power: +{state['tap_power']} coin / tap"
+        f"Energy: {state['effective_energy']}/{state['effective_max_energy']} ({regen_line})\n"
+        f"Tap Power: +{state['effective_tap_power']} coin / tap"
     )
 
 
@@ -640,12 +773,14 @@ def game_tap(chat_id, tap_count=1):
     if (now - state["updated_at"]) < GAME_TAP_COOLDOWN_SECONDS:
         return False, state, 0
 
-    if state["energy"] <= 0:
+    effective_max_energy = _effective_max_energy(state)
+    current_energy = min(state["energy"], effective_max_energy)
+    if current_energy <= 0:
         return False, state, 0
 
-    real_tap_count = min(tap_count, state["energy"])
-    gained = state["tap_power"] * real_tap_count
-    new_energy = state["energy"] - real_tap_count
+    real_tap_count = min(tap_count, current_energy)
+    gained = _effective_tap_power(state) * real_tap_count
+    new_energy = max(0, current_energy - real_tap_count)
     new_coins = state["coins"] + gained
     with get_db_connection() as conn:
         conn.execute(
@@ -683,6 +818,56 @@ def game_upgrade(chat_id):
             (new_coins, new_energy, new_max_energy, new_tap_power, new_level, str(chat_id)),
         )
     return True, _load_game_state(chat_id), cost
+
+
+def game_buy_item(chat_id, item_id):
+    item = _get_item(item_id)
+    if not item:
+        return False, None, "Item tidak ditemukan."
+
+    state = _load_game_state(chat_id)
+    if not state:
+        return False, None, "Gagal memuat state game."
+
+    owned_items = set(state.get("owned_items", []))
+    if item_id in owned_items:
+        return False, _decorate_game_state(state), "Item sudah dimiliki."
+
+    price = int(item["price"])
+    if state["coins"] < price:
+        return False, _decorate_game_state(state), f"Coin kurang. Butuh {price}."
+
+    owned_items.add(item_id)
+    slot_type = item["type"]
+    weapon_id = state["weapon_id"]
+    pet_id = state["pet_id"]
+    skin_id = state["skin_id"]
+    if slot_type == "weapon":
+        weapon_id = item_id
+    elif slot_type == "pet":
+        pet_id = item_id
+    elif slot_type == "skin":
+        skin_id = item_id
+
+    new_coins = state["coins"] - price
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            UPDATE telegram_game_state
+            SET coins = ?, weapon_id = ?, pet_id = ?, skin_id = ?, owned_items = ?
+            WHERE chat_id = ?
+            """,
+            (
+                new_coins,
+                weapon_id,
+                pet_id,
+                skin_id,
+                json.dumps(sorted(list(owned_items))),
+                str(chat_id),
+            ),
+        )
+    updated = _load_game_state(chat_id)
+    return True, _decorate_game_state(updated), f"Berhasil membeli {item['name']}."
 
 
 def game_leaderboard(limit=10):
@@ -1088,7 +1273,7 @@ def api_game_auth():
         return jsonify({"error": "Chat belum diizinkan memakai game."}), 403
 
     token, expires_at = create_miniapp_session(user_id)
-    state = _load_game_state(user_id)
+    state = _decorate_game_state(_load_game_state(user_id))
     return jsonify({
         "ok": True,
         "token": token,
@@ -1100,6 +1285,7 @@ def api_game_auth():
             "max_tap_batch": GAME_MAX_TAP_BATCH,
             "energy_regen_seconds": GAME_ENERGY_REGEN_SECONDS,
         },
+        "catalog": get_game_catalog(),
     }), 200
 
 
@@ -1116,7 +1302,7 @@ def api_game_state():
     chat_id, error = _require_game_session()
     if error:
         return error
-    return jsonify({"ok": True, "state": _load_game_state(chat_id)}), 200
+    return jsonify({"ok": True, "state": _decorate_game_state(_load_game_state(chat_id))}), 200
 
 
 @app.route('/api/game/tap', methods=['POST'])
@@ -1129,7 +1315,7 @@ def api_game_tap():
     tap_count = payload.get("tap_count", 1)
     request_key = request.headers.get("X-Idempotency-Key", "")
     if request_key and is_game_idempotency_replayed(chat_id, request_key):
-        return jsonify({"ok": True, "replayed": True, "state": _load_game_state(chat_id), "gained": 0}), 200
+        return jsonify({"ok": True, "replayed": True, "state": _decorate_game_state(_load_game_state(chat_id)), "gained": 0}), 200
 
     try:
         tap_count = int(tap_count)
@@ -1143,7 +1329,7 @@ def api_game_tap():
         "ok": True,
         "tapped": bool(ok),
         "gained": int(gained),
-        "state": state,
+        "state": _decorate_game_state(state),
     }), 200
 
 
@@ -1154,7 +1340,7 @@ def api_game_upgrade():
         return error
     request_key = request.headers.get("X-Idempotency-Key", "")
     if request_key and is_game_idempotency_replayed(chat_id, request_key):
-        return jsonify({"ok": True, "replayed": True, "state": _load_game_state(chat_id)}), 200
+        return jsonify({"ok": True, "replayed": True, "state": _decorate_game_state(_load_game_state(chat_id))}), 200
 
     ok, state, cost = game_upgrade(chat_id)
     if not state:
@@ -1163,7 +1349,30 @@ def api_game_upgrade():
         "ok": True,
         "upgraded": bool(ok),
         "cost": int(cost),
+        "state": _decorate_game_state(state),
+    }), 200
+
+
+@app.route('/api/game/buy', methods=['POST'])
+def api_game_buy():
+    chat_id, error = _require_game_session()
+    if error:
+        return error
+    request_key = request.headers.get("X-Idempotency-Key", "")
+    if request_key and is_game_idempotency_replayed(chat_id, request_key):
+        return jsonify({"ok": True, "replayed": True, "state": _decorate_game_state(_load_game_state(chat_id))}), 200
+
+    payload = request.get_json(silent=True) or {}
+    item_id = str(payload.get("item_id", "")).strip()
+    ok, state, message = game_buy_item(chat_id, item_id)
+    if state is None:
+        return jsonify({"error": message}), 500
+    return jsonify({
+        "ok": True,
+        "bought": bool(ok),
+        "message": message,
         "state": state,
+        "catalog": get_game_catalog(),
     }), 200
 
 
@@ -1291,10 +1500,7 @@ def process_telegram_message(message):
                 "/reset - Hapus riwayat percakapan\n"
                 "/plan - Lihat status plan kamu\n"
                 f"/upgrade - Upgrade ke {TELEGRAM_PREMIUM_PLAN_NAME} ({TELEGRAM_PREMIUM_PRICE_XTR} XTR)\n"
-                f"/game - Buka status {GAME_NAME}\n"
-                "/tap - Kumpulkan SawiCoin\n"
-                "/gupgrade - Upgrade tap power & energy game\n"
-                "/leaderboard - Peringkat pemain game\n"
+                f"/game - Buka {GAME_NAME} Mini App\n"
                 "/play - Buka Mini App game\n"
                 "/stats - Lihat statistik bot\n"
                 "/setmodel <model> - Ubah model (admin)\n"
@@ -1338,12 +1544,12 @@ def process_telegram_message(message):
             return
 
         if cmd == "/game":
-            webapp_url = f"{get_app_base_url()}/miniapp"
-            if not get_app_base_url():
+            app_base_url = get_app_base_url()
+            webapp_url = f"{app_base_url}/miniapp" if app_base_url else ""
+            if not app_base_url:
                 send_telegram_message(
                     chat_id=chat_id,
                     text=(
-                        f"{_format_game_status(_load_game_state(chat_id))}\n\n"
                         "Mini App belum aktif. Set environment APP_BASE_URL dulu, "
                         "contoh: https://namaservice.koyeb.app"
                     ),
@@ -1359,15 +1565,7 @@ def process_telegram_message(message):
                     ]
                 ]
             }
-            state = _load_game_state(chat_id)
-            reply = (
-                f"{_format_game_status(state)}\n\n"
-                "Aksi:\n"
-                "/tap - Tap sekali\n"
-                "/gupgrade - Upgrade pemain\n"
-                "/leaderboard - Lihat peringkat\n"
-                "Atau tekan tombol Play untuk Mini App."
-            )
+            reply = f"Buka {GAME_NAME} lewat Mini App:"
             send_telegram_message(
                 chat_id=chat_id,
                 text=reply,
@@ -1376,8 +1574,9 @@ def process_telegram_message(message):
             return
 
         if cmd == "/play":
-            webapp_url = f"{get_app_base_url()}/miniapp"
-            if not get_app_base_url():
+            app_base_url = get_app_base_url()
+            webapp_url = f"{app_base_url}/miniapp" if app_base_url else ""
+            if not app_base_url:
                 send_telegram_message(
                     chat_id=chat_id,
                     text="Mini App belum aktif. Set APP_BASE_URL di environment server.",
@@ -1398,57 +1597,6 @@ def process_telegram_message(message):
                 text=f"Buka {GAME_NAME} lewat Mini App:",
                 extra_payload={"reply_markup": keyboard},
             )
-            return
-
-        if cmd == "/tap":
-            ok, state, gained = game_tap(chat_id)
-            if not state:
-                send_telegram_message(chat_id=chat_id, text="Gagal memuat state game.")
-                return
-            if not ok:
-                send_telegram_message(
-                    chat_id=chat_id,
-                    text=(
-                        f"Energy habis.\n{_format_game_status(state)}\n\n"
-                        "Tunggu regen energy lalu tap lagi."
-                    ),
-                )
-                return
-            send_telegram_message(
-                chat_id=chat_id,
-                text=(
-                    f"Tap berhasil! +{gained} SawiCoin\n"
-                    f"{_format_game_status(state)}"
-                ),
-            )
-            return
-
-        if cmd == "/gupgrade":
-            ok, state, cost = game_upgrade(chat_id)
-            if not state:
-                send_telegram_message(chat_id=chat_id, text="Gagal memuat state game.")
-                return
-            if not ok:
-                send_telegram_message(
-                    chat_id=chat_id,
-                    text=(
-                        f"SawiCoin kurang untuk upgrade.\n"
-                        f"Biaya upgrade: {cost} coin\n"
-                        f"{_format_game_status(state)}"
-                    ),
-                )
-                return
-            send_telegram_message(
-                chat_id=chat_id,
-                text=(
-                    f"Upgrade sukses! -{cost} coin\n"
-                    f"{_format_game_status(state)}"
-                ),
-            )
-            return
-
-        if cmd == "/leaderboard":
-            send_telegram_message(chat_id=chat_id, text=game_leaderboard(limit=10))
             return
 
         if cmd == "/setmodel":

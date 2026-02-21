@@ -3,7 +3,7 @@
     const state = {
         token: "",
         game: null,
-        config: null,
+        catalog: [],
     };
 
     const els = {
@@ -11,10 +11,15 @@
         coin: document.getElementById("coin-value"),
         tap: document.getElementById("tap-value"),
         energy: document.getElementById("energy-value"),
+        weaponSlot: document.getElementById("weapon-slot"),
+        petSlot: document.getElementById("pet-slot"),
+        skinSlot: document.getElementById("skin-slot"),
+        weaponVisual: document.getElementById("weapon-visual"),
         tapBtn: document.getElementById("tap-btn"),
         upgradeBtn: document.getElementById("upgrade-btn"),
         refreshBtn: document.getElementById("refresh-btn"),
         leaderboard: document.getElementById("leaderboard-list"),
+        shopGrid: document.getElementById("shop-grid"),
         status: document.getElementById("status-text"),
     };
 
@@ -22,13 +27,34 @@
         els.status.textContent = text || "";
     }
 
+    function getEquipmentName(equipment) {
+        return equipment && equipment.name ? equipment.name : "None";
+    }
+
+    function setWeaponVisual(weaponId) {
+        const node = els.weaponVisual;
+        node.classList.remove("weapon-none", "weapon-bamboo", "weapon-shadow", "weapon-quantum");
+        if (!weaponId) {
+            node.classList.add("weapon-none");
+            return;
+        }
+        if (weaponId === "weapon_bamboo_spear") node.classList.add("weapon-bamboo");
+        else if (weaponId === "weapon_shadow_blade") node.classList.add("weapon-shadow");
+        else if (weaponId === "weapon_quantum_cleaver") node.classList.add("weapon-quantum");
+        else node.classList.add("weapon-none");
+    }
+
     function applyState(gameState) {
         if (!gameState) return;
         state.game = gameState;
         els.level.textContent = String(gameState.level);
         els.coin.textContent = String(gameState.coins);
-        els.tap.textContent = String(gameState.tap_power);
-        els.energy.textContent = `${gameState.energy}/${gameState.max_energy}`;
+        els.tap.textContent = String(gameState.effective_tap_power || gameState.tap_power);
+        els.energy.textContent = `${gameState.effective_energy}/${gameState.effective_max_energy}`;
+        els.weaponSlot.textContent = getEquipmentName(gameState.equipment && gameState.equipment.weapon);
+        els.petSlot.textContent = getEquipmentName(gameState.equipment && gameState.equipment.pet);
+        els.skinSlot.textContent = getEquipmentName(gameState.equipment && gameState.equipment.skin);
+        setWeaponVisual(gameState.weapon_id);
     }
 
     async function api(path, method = "GET", body = null, withIdempotency = false) {
@@ -37,7 +63,6 @@
         if (withIdempotency) {
             headers["X-Idempotency-Key"] = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
         }
-
         const response = await fetch(path, {
             method,
             headers,
@@ -60,9 +85,47 @@
         });
     }
 
+    function renderShop() {
+        const owned = new Set((state.game && state.game.owned_items) || []);
+        els.shopGrid.innerHTML = "";
+        state.catalog.forEach((item) => {
+            const card = document.createElement("article");
+            card.className = "shop-card";
+            const isOwned = owned.has(item.id);
+            card.innerHTML = `
+                <h3>${item.name}</h3>
+                <div class="shop-meta">Type: ${item.type}</div>
+                <div class="shop-meta">Tap +${item.tap_bonus} | Energy +${item.energy_bonus}</div>
+                <div class="shop-meta">Harga: ${item.price} coin</div>
+            `;
+            const btn = document.createElement("button");
+            btn.className = `buy-btn${isOwned ? " owned" : ""}`;
+            btn.textContent = isOwned ? "Owned" : "Buy & Equip";
+            btn.disabled = isOwned;
+            btn.addEventListener("click", () => buyItem(item.id));
+            card.appendChild(btn);
+            els.shopGrid.appendChild(card);
+        });
+    }
+
     async function refreshState() {
         const data = await api("/api/game/state");
         applyState(data.state);
+        renderShop();
+    }
+
+    async function buyItem(itemId) {
+        try {
+            const data = await api("/api/game/buy", "POST", { item_id: itemId }, true);
+            applyState(data.state);
+            if (Array.isArray(data.catalog)) {
+                state.catalog = data.catalog;
+            }
+            renderShop();
+            setStatus(data.message || (data.bought ? "Item dibeli." : "Pembelian gagal."));
+        } catch (err) {
+            setStatus(err.message);
+        }
     }
 
     async function handleTap() {
@@ -70,17 +133,14 @@
         try {
             const data = await api("/api/game/tap", "POST", { tap_count: 1 }, true);
             applyState(data.state);
-            if (data.tapped) {
-                setStatus(`+${data.gained} SawiCoin`);
-            } else {
-                setStatus("Energy habis atau terlalu cepat tap.");
-            }
+            renderShop();
+            setStatus(data.tapped ? `+${data.gained} coin` : "Energy habis atau tap terlalu cepat.");
         } catch (err) {
             setStatus(err.message);
         } finally {
             setTimeout(() => {
                 els.tapBtn.disabled = false;
-            }, 250);
+            }, 220);
         }
     }
 
@@ -89,11 +149,8 @@
         try {
             const data = await api("/api/game/upgrade", "POST", {}, true);
             applyState(data.state);
-            if (data.upgraded) {
-                setStatus(`Upgrade berhasil. Biaya ${data.cost} coin.`);
-            } else {
-                setStatus(`Coin kurang. Butuh ${data.cost} coin.`);
-            }
+            renderShop();
+            setStatus(data.upgraded ? `Upgrade sukses. Biaya ${data.cost}.` : `Coin kurang. Butuh ${data.cost}.`);
         } catch (err) {
             setStatus(err.message);
         } finally {
@@ -106,18 +163,17 @@
             setStatus("Mini App hanya bisa dibuka dari Telegram.");
             return;
         }
-
         tg.ready();
         tg.expand();
-        setStatus("Menghubungkan akun Telegram...");
-
+        setStatus("Sinkronisasi akun...");
         try {
             const auth = await api("/api/game/auth", "POST", { initData: tg.initData });
             state.token = auth.token;
-            state.config = auth.config || {};
+            state.catalog = Array.isArray(auth.catalog) ? auth.catalog : [];
             applyState(auth.state);
+            renderShop();
             await loadLeaderboard();
-            setStatus("Siap bermain.");
+            setStatus("SawiPresto Revenge siap dimainkan.");
         } catch (err) {
             setStatus(`Auth gagal: ${err.message}`);
         }
