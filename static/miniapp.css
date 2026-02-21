@@ -220,7 +220,7 @@ body {
 }
 
 .enemy-layer {
-    transform: scaleX(-1);
+    transform: none;
 }
 
 .weapon-layer {
