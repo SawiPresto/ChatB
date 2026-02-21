@@ -35,6 +35,10 @@ TELEGRAM_SEND_RETRY_DELAY_SECONDS = float(
 TELEGRAM_PREMIUM_PRICE_XTR = max(1, int(os.getenv("TELEGRAM_PREMIUM_PRICE_XTR", "100")))
 TELEGRAM_PREMIUM_DURATION_DAYS = max(1, int(os.getenv("TELEGRAM_PREMIUM_DURATION_DAYS", "30")))
 TELEGRAM_PREMIUM_PLAN_NAME = os.getenv("TELEGRAM_PREMIUM_PLAN_NAME", "Premium 30 Hari").strip()
+GAME_NAME = "SawiPresto Revenge"
+GAME_ENERGY_REGEN_SECONDS = max(1, int(os.getenv("GAME_ENERGY_REGEN_SECONDS", "20")))
+GAME_DEFAULT_MAX_ENERGY = max(5, int(os.getenv("GAME_DEFAULT_MAX_ENERGY", "20")))
+GAME_DEFAULT_TAP_POWER = max(1, int(os.getenv("GAME_DEFAULT_TAP_POWER", "1")))
 APP_STARTED_AT = time.time()
 runtime_config = {"model": DEFAULT_MODEL}
 
@@ -103,6 +107,19 @@ def init_memory_store():
                 chat_id TEXT PRIMARY KEY,
                 plan_name TEXT NOT NULL,
                 expires_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS telegram_game_state (
+                chat_id TEXT PRIMARY KEY,
+                coins INTEGER NOT NULL,
+                energy INTEGER NOT NULL,
+                max_energy INTEGER NOT NULL,
+                tap_power INTEGER NOT NULL,
+                level INTEGER NOT NULL,
                 updated_at REAL NOT NULL
             )
             """
@@ -362,6 +379,169 @@ def activate_premium(chat_id, plan_name=None, duration_days=None):
             (str(chat_id), plan_name, expires_at, now),
         )
     return expires_at
+
+
+def _ensure_game_state(chat_id):
+    now = time.time()
+    chat_key = str(chat_id)
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO telegram_game_state(chat_id, coins, energy, max_energy, tap_power, level, updated_at)
+            VALUES (?, 0, ?, ?, ?, 1, ?)
+            ON CONFLICT(chat_id) DO NOTHING
+            """,
+            (
+                chat_key,
+                GAME_DEFAULT_MAX_ENERGY,
+                GAME_DEFAULT_MAX_ENERGY,
+                GAME_DEFAULT_TAP_POWER,
+                now,
+            ),
+        )
+
+
+def _load_game_state(chat_id):
+    _ensure_game_state(chat_id)
+    chat_key = str(chat_id)
+    now = time.time()
+    with get_db_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT coins, energy, max_energy, tap_power, level, updated_at
+            FROM telegram_game_state
+            WHERE chat_id = ?
+            """,
+            (chat_key,),
+        ).fetchone()
+        if not row:
+            return None
+
+        coins, energy, max_energy, tap_power, level, updated_at = row
+        elapsed = max(0.0, now - float(updated_at))
+        regen_units = int(elapsed // GAME_ENERGY_REGEN_SECONDS)
+        if regen_units > 0 and int(energy) < int(max_energy):
+            new_energy = min(int(max_energy), int(energy) + regen_units)
+            remainder = elapsed % GAME_ENERGY_REGEN_SECONDS
+            new_updated_at = now - remainder
+            conn.execute(
+                """
+                UPDATE telegram_game_state
+                SET energy = ?, updated_at = ?
+                WHERE chat_id = ?
+                """,
+                (new_energy, new_updated_at, chat_key),
+            )
+            energy = new_energy
+            updated_at = new_updated_at
+
+    return {
+        "chat_id": chat_key,
+        "coins": int(coins),
+        "energy": int(energy),
+        "max_energy": int(max_energy),
+        "tap_power": int(tap_power),
+        "level": int(level),
+        "updated_at": float(updated_at),
+    }
+
+
+def _seconds_to_next_energy(state):
+    if state["energy"] >= state["max_energy"]:
+        return 0
+    elapsed = max(0.0, time.time() - state["updated_at"])
+    remain = GAME_ENERGY_REGEN_SECONDS - int(elapsed % GAME_ENERGY_REGEN_SECONDS)
+    if remain == GAME_ENERGY_REGEN_SECONDS:
+        return 0
+    return max(1, remain)
+
+
+def _format_game_status(state):
+    next_energy = _seconds_to_next_energy(state)
+    regen_line = "Energy penuh."
+    if next_energy > 0:
+        regen_line = f"+1 energy dalam {next_energy} detik."
+    return (
+        f"{GAME_NAME}\n"
+        f"Level: {state['level']}\n"
+        f"SawiCoin: {state['coins']}\n"
+        f"Energy: {state['energy']}/{state['max_energy']} ({regen_line})\n"
+        f"Tap Power: +{state['tap_power']} coin / tap"
+    )
+
+
+def game_tap(chat_id):
+    state = _load_game_state(chat_id)
+    if not state:
+        return False, None, 0
+    if state["energy"] <= 0:
+        return False, state, 0
+
+    gained = state["tap_power"]
+    new_energy = state["energy"] - 1
+    new_coins = state["coins"] + gained
+    now = time.time()
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            UPDATE telegram_game_state
+            SET coins = ?, energy = ?, updated_at = ?
+            WHERE chat_id = ?
+            """,
+            (new_coins, new_energy, now, str(chat_id)),
+        )
+    updated = _load_game_state(chat_id)
+    return True, updated, gained
+
+
+def game_upgrade(chat_id):
+    state = _load_game_state(chat_id)
+    if not state:
+        return False, None, 0
+    cost = state["level"] * 50
+    if state["coins"] < cost:
+        return False, state, cost
+
+    new_level = state["level"] + 1
+    new_tap_power = state["tap_power"] + 1
+    new_max_energy = state["max_energy"] + 2
+    new_coins = state["coins"] - cost
+    new_energy = min(state["energy"], new_max_energy)
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            UPDATE telegram_game_state
+            SET coins = ?, energy = ?, max_energy = ?, tap_power = ?, level = ?
+            WHERE chat_id = ?
+            """,
+            (new_coins, new_energy, new_max_energy, new_tap_power, new_level, str(chat_id)),
+        )
+    return True, _load_game_state(chat_id), cost
+
+
+def game_leaderboard(limit=10):
+    max_limit = max(1, min(int(limit), 20))
+    with get_db_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT chat_id, coins, level
+            FROM telegram_game_state
+            ORDER BY coins DESC, level DESC
+            LIMIT ?
+            """,
+            (max_limit,),
+        ).fetchall()
+
+    if not rows:
+        return "Leaderboard kosong. Jadilah pemain pertama!"
+
+    lines = [f"Leaderboard {GAME_NAME}:"]
+    rank = 1
+    for row in rows:
+        chat_id, coins, level = row
+        lines.append(f"{rank}. chat {chat_id} - {int(coins)} coin (Lv {int(level)})")
+        rank += 1
+    return "\n".join(lines)
 
 
 def check_and_increment_daily_quota(chat_id):
@@ -815,6 +995,10 @@ def process_telegram_message(message):
                 "/reset - Hapus riwayat percakapan\n"
                 "/plan - Lihat status plan kamu\n"
                 f"/upgrade - Upgrade ke {TELEGRAM_PREMIUM_PLAN_NAME} ({TELEGRAM_PREMIUM_PRICE_XTR} XTR)\n"
+                f"/game - Buka status {GAME_NAME}\n"
+                "/tap - Kumpulkan SawiCoin\n"
+                "/gupgrade - Upgrade tap power & energy game\n"
+                "/leaderboard - Peringkat pemain game\n"
                 "/stats - Lihat statistik bot\n"
                 "/setmodel <model> - Ubah model (admin)\n"
                 "/allow <chat_id> - Izinkan chat id (admin)\n"
@@ -854,6 +1038,69 @@ def process_telegram_message(message):
                     chat_id=chat_id,
                     text=f"Gagal membuat invoice premium: {exc}",
                 )
+            return
+
+        if cmd == "/game":
+            state = _load_game_state(chat_id)
+            reply = (
+                f"{_format_game_status(state)}\n\n"
+                "Aksi:\n"
+                "/tap - Tap sekali\n"
+                "/gupgrade - Upgrade pemain\n"
+                "/leaderboard - Lihat peringkat"
+            )
+            send_telegram_message(chat_id=chat_id, text=reply)
+            return
+
+        if cmd == "/tap":
+            ok, state, gained = game_tap(chat_id)
+            if not state:
+                send_telegram_message(chat_id=chat_id, text="Gagal memuat state game.")
+                return
+            if not ok:
+                send_telegram_message(
+                    chat_id=chat_id,
+                    text=(
+                        f"Energy habis.\n{_format_game_status(state)}\n\n"
+                        "Tunggu regen energy lalu tap lagi."
+                    ),
+                )
+                return
+            send_telegram_message(
+                chat_id=chat_id,
+                text=(
+                    f"Tap berhasil! +{gained} SawiCoin\n"
+                    f"{_format_game_status(state)}"
+                ),
+            )
+            return
+
+        if cmd == "/gupgrade":
+            ok, state, cost = game_upgrade(chat_id)
+            if not state:
+                send_telegram_message(chat_id=chat_id, text="Gagal memuat state game.")
+                return
+            if not ok:
+                send_telegram_message(
+                    chat_id=chat_id,
+                    text=(
+                        f"SawiCoin kurang untuk upgrade.\n"
+                        f"Biaya upgrade: {cost} coin\n"
+                        f"{_format_game_status(state)}"
+                    ),
+                )
+                return
+            send_telegram_message(
+                chat_id=chat_id,
+                text=(
+                    f"Upgrade sukses! -{cost} coin\n"
+                    f"{_format_game_status(state)}"
+                ),
+            )
+            return
+
+        if cmd == "/leaderboard":
+            send_telegram_message(chat_id=chat_id, text=game_leaderboard(limit=10))
             return
 
         if cmd == "/setmodel":
