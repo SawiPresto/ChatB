@@ -46,6 +46,10 @@ GAME_TAP_COOLDOWN_SECONDS = float(os.getenv("GAME_TAP_COOLDOWN_SECONDS", "0.35")
 GAME_MAX_TAP_BATCH = max(1, int(os.getenv("GAME_MAX_TAP_BATCH", "10")))
 MINIAPP_SESSION_TTL_SECONDS = max(300, int(os.getenv("MINIAPP_SESSION_TTL_SECONDS", "86400")))
 MINIAPP_SIGNING_SECRET = os.getenv("MINIAPP_SIGNING_SECRET", "").strip()
+GAME_CHARACTER_BASE_ASSET = os.getenv(
+    "GAME_CHARACTER_BASE_ASSET",
+    "/static/game-assets/characters/sawipresto-base.png",
+).strip()
 APP_STARTED_AT = time.time()
 runtime_config = {"model": DEFAULT_MODEL}
 
@@ -65,6 +69,7 @@ GAME_SHOP_ITEMS = {
         "price": 300,
         "tap_bonus": 2,
         "energy_bonus": 0,
+        "asset": "/static/game-assets/weapons/bamboo-spear.png",
     },
     "weapon_shadow_blade": {
         "name": "Shadow Blade",
@@ -72,6 +77,7 @@ GAME_SHOP_ITEMS = {
         "price": 1200,
         "tap_bonus": 6,
         "energy_bonus": 1,
+        "asset": "/static/game-assets/weapons/shadow-blade.png",
     },
     "weapon_quantum_cleaver": {
         "name": "Quantum Cleaver",
@@ -79,6 +85,7 @@ GAME_SHOP_ITEMS = {
         "price": 4500,
         "tap_bonus": 15,
         "energy_bonus": 2,
+        "asset": "/static/game-assets/weapons/quantum-cleaver.png",
     },
     "pet_neko_drone": {
         "name": "Neko Drone",
@@ -86,6 +93,7 @@ GAME_SHOP_ITEMS = {
         "price": 800,
         "tap_bonus": 3,
         "energy_bonus": 0,
+        "asset": "/static/game-assets/pets/neko-drone.png",
     },
     "pet_turbo_hammy": {
         "name": "Turbo Hammy",
@@ -93,6 +101,7 @@ GAME_SHOP_ITEMS = {
         "price": 2200,
         "tap_bonus": 8,
         "energy_bonus": 2,
+        "asset": "/static/game-assets/pets/turbo-hammy.png",
     },
     "skin_ronin": {
         "name": "Ronin Jacket",
@@ -100,6 +109,7 @@ GAME_SHOP_ITEMS = {
         "price": 1500,
         "tap_bonus": 2,
         "energy_bonus": 3,
+        "asset": "/static/game-assets/skins/ronin-jacket.png",
     },
 }
 
@@ -1284,6 +1294,7 @@ def api_game_auth():
             "tap_cooldown_seconds": GAME_TAP_COOLDOWN_SECONDS,
             "max_tap_batch": GAME_MAX_TAP_BATCH,
             "energy_regen_seconds": GAME_ENERGY_REGEN_SECONDS,
+            "character_base_asset": GAME_CHARACTER_BASE_ASSET,
         },
         "catalog": get_game_catalog(),
     }), 200

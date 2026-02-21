@@ -24,10 +24,16 @@
                 <h2>Karakter</h2>
                 <div class="character-stage">
                     <div class="char-glow"></div>
-                    <div class="char-cat">
+                    <div class="char-cat" id="char-fallback">
                         <div class="cat-ears"></div>
                         <div class="cat-face"></div>
-                        <div class="cat-weapon" id="weapon-visual"></div>
+                        <div class="cat-weapon weapon-none" id="weapon-visual"></div>
+                    </div>
+                    <div class="char-art" id="char-art">
+                        <img id="char-base-img" class="char-layer" alt="Character base">
+                        <img id="char-skin-img" class="char-layer" alt="Character skin">
+                        <img id="char-weapon-img" class="char-layer" alt="Character weapon">
+                        <img id="char-pet-img" class="char-layer pet-layer" alt="Character pet">
                     </div>
                 </div>
                 <div class="loadout">

@@ -4,6 +4,7 @@
         token: "",
         game: null,
         catalog: [],
+        config: {},
     };
 
     const els = {
@@ -15,6 +16,12 @@
         petSlot: document.getElementById("pet-slot"),
         skinSlot: document.getElementById("skin-slot"),
         weaponVisual: document.getElementById("weapon-visual"),
+        charFallback: document.getElementById("char-fallback"),
+        charArt: document.getElementById("char-art"),
+        charBaseImg: document.getElementById("char-base-img"),
+        charSkinImg: document.getElementById("char-skin-img"),
+        charWeaponImg: document.getElementById("char-weapon-img"),
+        charPetImg: document.getElementById("char-pet-img"),
         tapBtn: document.getElementById("tap-btn"),
         upgradeBtn: document.getElementById("upgrade-btn"),
         refreshBtn: document.getElementById("refresh-btn"),
@@ -44,6 +51,38 @@
         else node.classList.add("weapon-none");
     }
 
+    function setImgIfExists(node, src) {
+        if (!node) return;
+        if (!src) {
+            node.removeAttribute("src");
+            node.style.display = "none";
+            return;
+        }
+        node.src = src;
+        node.style.display = "block";
+    }
+
+    function applyCharacterArt(gameState) {
+        const baseAsset = state.config.character_base_asset || "";
+        const skinAsset = gameState && gameState.equipment && gameState.equipment.skin ? gameState.equipment.skin.asset : "";
+        const weaponAsset = gameState && gameState.equipment && gameState.equipment.weapon ? gameState.equipment.weapon.asset : "";
+        const petAsset = gameState && gameState.equipment && gameState.equipment.pet ? gameState.equipment.pet.asset : "";
+
+        const hasAny = Boolean(baseAsset || skinAsset || weaponAsset || petAsset);
+        if (!hasAny) {
+            els.charArt.classList.remove("active");
+            els.charFallback.style.display = "block";
+            return;
+        }
+
+        setImgIfExists(els.charBaseImg, baseAsset);
+        setImgIfExists(els.charSkinImg, skinAsset);
+        setImgIfExists(els.charWeaponImg, weaponAsset);
+        setImgIfExists(els.charPetImg, petAsset);
+        els.charArt.classList.add("active");
+        els.charFallback.style.display = "none";
+    }
+
     function applyState(gameState) {
         if (!gameState) return;
         state.game = gameState;
@@ -55,6 +94,7 @@
         els.petSlot.textContent = getEquipmentName(gameState.equipment && gameState.equipment.pet);
         els.skinSlot.textContent = getEquipmentName(gameState.equipment && gameState.equipment.skin);
         setWeaponVisual(gameState.weapon_id);
+        applyCharacterArt(gameState);
     }
 
     async function api(path, method = "GET", body = null, withIdempotency = false) {
@@ -94,6 +134,7 @@
             const isOwned = owned.has(item.id);
             card.innerHTML = `
                 <h3>${item.name}</h3>
+                ${item.asset ? `<img class="item-thumb" src="${item.asset}" alt="${item.name}">` : ""}
                 <div class="shop-meta">Type: ${item.type}</div>
                 <div class="shop-meta">Tap +${item.tap_bonus} | Energy +${item.energy_bonus}</div>
                 <div class="shop-meta">Harga: ${item.price} coin</div>
@@ -170,6 +211,7 @@
             const auth = await api("/api/game/auth", "POST", { initData: tg.initData });
             state.token = auth.token;
             state.catalog = Array.isArray(auth.catalog) ? auth.catalog : [];
+            state.config = auth.config || {};
             applyState(auth.state);
             renderShop();
             await loadLeaderboard();
