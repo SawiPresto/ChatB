@@ -1,0 +1,107 @@
+:root {
+    --bg: #0b1220;
+    --panel: #101a30;
+    --panel-soft: #0f1f3d;
+    --text: #e8efff;
+    --muted: #8ea0c9;
+    --accent: #22c55e;
+    --accent-strong: #16a34a;
+    --line: #26365f;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
+    color: var(--text);
+    background: radial-gradient(circle at top, #16284f 0%, var(--bg) 56%);
+}
+
+.app {
+    max-width: 680px;
+    margin: 0 auto;
+    padding: 14px;
+    display: grid;
+    gap: 12px;
+}
+
+.panel {
+    background: linear-gradient(180deg, var(--panel), var(--panel-soft));
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 14px;
+}
+
+.hero h1 {
+    margin: 0;
+    font-size: 1.35rem;
+}
+
+.muted {
+    margin: 6px 0 0;
+    color: var(--muted);
+}
+
+.stats {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.label {
+    display: block;
+    color: var(--muted);
+    font-size: 0.82rem;
+}
+
+strong {
+    font-size: 1.2rem;
+}
+
+.actions {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.btn {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #1a2d52;
+    color: var(--text);
+    font-weight: 700;
+    padding: 12px;
+}
+
+.btn.primary {
+    background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+    border-color: #16a34a;
+}
+
+.btn.ghost {
+    background: transparent;
+}
+
+.btn:disabled {
+    opacity: 0.55;
+}
+
+.leaderboard {
+    margin: 8px 0 0;
+    padding-left: 18px;
+}
+
+.leaderboard li {
+    margin-bottom: 6px;
+    color: #cfdbff;
+}
+
+.status {
+    margin: 0;
+    font-size: 0.9rem;
+    color: var(--muted);
+    min-height: 20px;
+}

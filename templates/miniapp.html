@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ game_name }}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='miniapp.css') }}">
+</head>
+<body>
+    <main class="app">
+        <header class="panel hero">
+            <h1 id="game-title">{{ game_name }}</h1>
+            <p class="muted">Tap. Upgrade. Climb leaderboard.</p>
+        </header>
+
+        <section class="panel stats">
+            <div><span class="label">Level</span><strong id="level-value">1</strong></div>
+            <div><span class="label">SawiCoin</span><strong id="coin-value">0</strong></div>
+            <div><span class="label">Tap Power</span><strong id="tap-value">1</strong></div>
+            <div><span class="label">Energy</span><strong id="energy-value">0/0</strong></div>
+        </section>
+
+        <section class="panel actions">
+            <button id="tap-btn" class="btn primary">TAP</button>
+            <button id="upgrade-btn" class="btn">Upgrade</button>
+            <button id="refresh-btn" class="btn ghost">Refresh</button>
+        </section>
+
+        <section class="panel">
+            <h2>Leaderboard</h2>
+            <ol id="leaderboard-list" class="leaderboard"></ol>
+        </section>
+
+        <p id="status-text" class="status"></p>
+    </main>
+
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="{{ url_for('static', filename='miniapp.js') }}"></script>
+</body>
+</html>

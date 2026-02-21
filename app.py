@@ -3,14 +3,17 @@ import logging
 import os
 import re
 import html
+import hmac
+import hashlib
 import sqlite3
 import time
 from collections import defaultdict, deque
 from threading import Lock, Thread
+from urllib.parse import parse_qsl
 from urllib import request as urllib_request
 from urllib.error import HTTPError, URLError
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, has_request_context
 from groq import Groq
 
 app = Flask(__name__)
@@ -39,6 +42,10 @@ GAME_NAME = "SawiPresto Revenge"
 GAME_ENERGY_REGEN_SECONDS = max(1, int(os.getenv("GAME_ENERGY_REGEN_SECONDS", "20")))
 GAME_DEFAULT_MAX_ENERGY = max(5, int(os.getenv("GAME_DEFAULT_MAX_ENERGY", "20")))
 GAME_DEFAULT_TAP_POWER = max(1, int(os.getenv("GAME_DEFAULT_TAP_POWER", "1")))
+GAME_TAP_COOLDOWN_SECONDS = float(os.getenv("GAME_TAP_COOLDOWN_SECONDS", "0.35"))
+GAME_MAX_TAP_BATCH = max(1, int(os.getenv("GAME_MAX_TAP_BATCH", "10")))
+MINIAPP_SESSION_TTL_SECONDS = max(300, int(os.getenv("MINIAPP_SESSION_TTL_SECONDS", "86400")))
+MINIAPP_SIGNING_SECRET = os.getenv("MINIAPP_SIGNING_SECRET", "").strip()
 APP_STARTED_AT = time.time()
 runtime_config = {"model": DEFAULT_MODEL}
 
@@ -124,6 +131,26 @@ def init_memory_store():
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS telegram_game_sessions (
+                token TEXT PRIMARY KEY,
+                chat_id TEXT NOT NULL,
+                expires_at REAL NOT NULL,
+                created_at REAL NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS telegram_game_idempotency (
+                chat_id TEXT NOT NULL,
+                request_key TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                PRIMARY KEY(chat_id, request_key)
+            )
+            """
+        )
 
 
 init_memory_store()
@@ -139,6 +166,15 @@ def get_webhook_secret():
 
 def get_webhook_header_secret():
     return os.getenv("TELEGRAM_WEBHOOK_HEADER_SECRET", "").strip()
+
+
+def get_app_base_url():
+    explicit = os.getenv("APP_BASE_URL", "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+    if has_request_context():
+        return request.url_root.rstrip("/")
+    return ""
 
 
 def get_allowed_chat_ids():
@@ -232,6 +268,101 @@ def is_chat_allowed(chat_id):
     if allowed_chat_ids is None:
         return True
     return int(chat_id) in allowed_chat_ids
+
+
+def get_miniapp_signing_key():
+    if MINIAPP_SIGNING_SECRET:
+        return MINIAPP_SIGNING_SECRET.encode("utf-8")
+    token = get_telegram_token()
+    if not token:
+        return b""
+    return token.encode("utf-8")
+
+
+def create_miniapp_session(chat_id):
+    now = time.time()
+    expires_at = now + MINIAPP_SESSION_TTL_SECONDS
+    raw = f"{chat_id}:{now}:{os.urandom(16).hex()}"
+    token = hmac.new(get_miniapp_signing_key(), raw.encode("utf-8"), hashlib.sha256).hexdigest()
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO telegram_game_sessions(token, chat_id, expires_at, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (token, str(chat_id), expires_at, now),
+        )
+        conn.execute("DELETE FROM telegram_game_sessions WHERE expires_at < ?", (now,))
+    return token, expires_at
+
+
+def get_chat_id_from_session(token):
+    if not token:
+        return None
+    now = time.time()
+    with get_db_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT chat_id, expires_at
+            FROM telegram_game_sessions
+            WHERE token = ?
+            """,
+            (token,),
+        ).fetchone()
+    if not row:
+        return None
+    chat_id, expires_at = row
+    if float(expires_at) < now:
+        return None
+    return int(chat_id)
+
+
+def verify_telegram_webapp_init_data(init_data):
+    token = get_telegram_token()
+    if not token:
+        return False, "TELEGRAM_BOT_TOKEN belum diset.", None
+    if not init_data:
+        return False, "initData kosong.", None
+
+    pairs = dict(parse_qsl(str(init_data), keep_blank_values=True))
+    received_hash = pairs.pop("hash", "")
+    if not received_hash:
+        return False, "hash tidak ditemukan di initData.", None
+
+    data_check_string = "\n".join(
+        f"{key}={pairs[key]}" for key in sorted(pairs.keys())
+    )
+    secret_key = hmac.new(
+        b"WebAppData",
+        token.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    expected_hash = hmac.new(
+        secret_key,
+        data_check_string.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+    if not hmac.compare_digest(expected_hash, received_hash):
+        return False, "initData tidak valid.", None
+
+    auth_date = int(pairs.get("auth_date", "0") or "0")
+    now = int(time.time())
+    if auth_date <= 0 or (now - auth_date) > 86400:
+        return False, "initData sudah kedaluwarsa.", None
+
+    user_raw = pairs.get("user")
+    if not user_raw:
+        return False, "Data user tidak ditemukan.", None
+    try:
+        user_data = json.loads(user_raw)
+    except Exception:
+        return False, "Data user tidak valid.", None
+
+    user_id = user_data.get("id")
+    if not user_id:
+        return False, "User id tidak ditemukan.", None
+    return True, "", int(user_id)
 
 
 load_runtime_model()
@@ -470,17 +601,52 @@ def _format_game_status(state):
     )
 
 
-def game_tap(chat_id):
+def is_game_idempotency_replayed(chat_id, request_key):
+    if not request_key:
+        return False
+    now = time.time()
+    with get_db_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM telegram_game_idempotency
+            WHERE chat_id = ? AND request_key = ?
+            """,
+            (str(chat_id), str(request_key)),
+        ).fetchone()
+        if row:
+            return True
+        conn.execute(
+            """
+            INSERT INTO telegram_game_idempotency(chat_id, request_key, created_at)
+            VALUES (?, ?, ?)
+            """,
+            (str(chat_id), str(request_key), now),
+        )
+        conn.execute(
+            "DELETE FROM telegram_game_idempotency WHERE created_at < ?",
+            (now - 86400,),
+        )
+    return False
+
+
+def game_tap(chat_id, tap_count=1):
     state = _load_game_state(chat_id)
     if not state:
         return False, None, 0
+    tap_count = max(1, min(int(tap_count), GAME_MAX_TAP_BATCH))
+
+    now = time.time()
+    if (now - state["updated_at"]) < GAME_TAP_COOLDOWN_SECONDS:
+        return False, state, 0
+
     if state["energy"] <= 0:
         return False, state, 0
 
-    gained = state["tap_power"]
-    new_energy = state["energy"] - 1
+    real_tap_count = min(tap_count, state["energy"])
+    gained = state["tap_power"] * real_tap_count
+    new_energy = state["energy"] - real_tap_count
     new_coins = state["coins"] + gained
-    now = time.time()
     with get_db_connection() as conn:
         conn.execute(
             """
@@ -810,13 +976,15 @@ def telegram_api_call(method, payload):
     _send_telegram_payload(url, payload)
 
 
-def send_telegram_message(chat_id, text):
+def send_telegram_message(chat_id, text, extra_payload=None):
     html_chunks = chunk_telegram_text(format_text_for_telegram(text))
     plain_chunks = chunk_telegram_text(plain_text_for_telegram(text))
     html_failed = False
 
     for chunk in html_chunks:
         payload = {"chat_id": chat_id, "text": chunk, "parse_mode": "HTML"}
+        if extra_payload:
+            payload.update(extra_payload)
         try:
             telegram_api_call("sendMessage", payload)
         except HTTPError as exc:
@@ -837,7 +1005,10 @@ def send_telegram_message(chat_id, text):
     # Fallback plain text when HTML parsing fails on Telegram side.
     if html_failed:
         for chunk in plain_chunks:
-            telegram_api_call("sendMessage", {"chat_id": chat_id, "text": chunk})
+            payload = {"chat_id": chat_id, "text": chunk}
+            if extra_payload:
+                payload.update(extra_payload)
+            telegram_api_call("sendMessage", payload)
 
 
 def send_telegram_stars_invoice(chat_id):
@@ -889,8 +1060,133 @@ def debug_env():
         "telegram_daily_quota": TELEGRAM_DAILY_QUOTA,
         "telegram_premium_price_xtr": TELEGRAM_PREMIUM_PRICE_XTR,
         "telegram_premium_duration_days": TELEGRAM_PREMIUM_DURATION_DAYS,
+        "game_name": GAME_NAME,
         "groq_model": get_runtime_model(),
     }), 200
+
+
+def _extract_bearer_token():
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.lower().startswith("bearer "):
+        return ""
+    return auth_header.split(" ", 1)[1].strip()
+
+
+@app.route('/miniapp', methods=['GET'])
+def miniapp():
+    return render_template('miniapp.html', game_name=GAME_NAME)
+
+
+@app.route('/api/game/auth', methods=['POST'])
+def api_game_auth():
+    payload = request.get_json(silent=True) or {}
+    init_data = payload.get("initData", "")
+    ok, error_message, user_id = verify_telegram_webapp_init_data(init_data)
+    if not ok:
+        return jsonify({"error": error_message}), 403
+    if not is_chat_allowed(user_id):
+        return jsonify({"error": "Chat belum diizinkan memakai game."}), 403
+
+    token, expires_at = create_miniapp_session(user_id)
+    state = _load_game_state(user_id)
+    return jsonify({
+        "ok": True,
+        "token": token,
+        "expires_at": int(expires_at),
+        "state": state,
+        "config": {
+            "game_name": GAME_NAME,
+            "tap_cooldown_seconds": GAME_TAP_COOLDOWN_SECONDS,
+            "max_tap_batch": GAME_MAX_TAP_BATCH,
+            "energy_regen_seconds": GAME_ENERGY_REGEN_SECONDS,
+        },
+    }), 200
+
+
+def _require_game_session():
+    token = _extract_bearer_token()
+    chat_id = get_chat_id_from_session(token)
+    if not chat_id:
+        return None, (jsonify({"error": "Session tidak valid atau kedaluwarsa."}), 401)
+    return chat_id, None
+
+
+@app.route('/api/game/state', methods=['GET'])
+def api_game_state():
+    chat_id, error = _require_game_session()
+    if error:
+        return error
+    return jsonify({"ok": True, "state": _load_game_state(chat_id)}), 200
+
+
+@app.route('/api/game/tap', methods=['POST'])
+def api_game_tap():
+    chat_id, error = _require_game_session()
+    if error:
+        return error
+
+    payload = request.get_json(silent=True) or {}
+    tap_count = payload.get("tap_count", 1)
+    request_key = request.headers.get("X-Idempotency-Key", "")
+    if request_key and is_game_idempotency_replayed(chat_id, request_key):
+        return jsonify({"ok": True, "replayed": True, "state": _load_game_state(chat_id), "gained": 0}), 200
+
+    try:
+        tap_count = int(tap_count)
+    except (TypeError, ValueError):
+        return jsonify({"error": "tap_count harus angka."}), 400
+
+    ok, state, gained = game_tap(chat_id, tap_count=tap_count)
+    if not state:
+        return jsonify({"error": "Gagal memuat state game."}), 500
+    return jsonify({
+        "ok": True,
+        "tapped": bool(ok),
+        "gained": int(gained),
+        "state": state,
+    }), 200
+
+
+@app.route('/api/game/upgrade', methods=['POST'])
+def api_game_upgrade():
+    chat_id, error = _require_game_session()
+    if error:
+        return error
+    request_key = request.headers.get("X-Idempotency-Key", "")
+    if request_key and is_game_idempotency_replayed(chat_id, request_key):
+        return jsonify({"ok": True, "replayed": True, "state": _load_game_state(chat_id)}), 200
+
+    ok, state, cost = game_upgrade(chat_id)
+    if not state:
+        return jsonify({"error": "Gagal memuat state game."}), 500
+    return jsonify({
+        "ok": True,
+        "upgraded": bool(ok),
+        "cost": int(cost),
+        "state": state,
+    }), 200
+
+
+@app.route('/api/game/leaderboard', methods=['GET'])
+def api_game_leaderboard():
+    chat_id, error = _require_game_session()
+    if error:
+        return error
+    _ = chat_id
+    with get_db_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT chat_id, coins, level
+            FROM telegram_game_state
+            ORDER BY coins DESC, level DESC
+            LIMIT 20
+            """
+        ).fetchall()
+    data = [
+        {"chat_id": str(row[0]), "coins": int(row[1]), "level": int(row[2])}
+        for row in rows
+    ]
+    return jsonify({"ok": True, "leaderboard": data}), 200
 
 @app.route('/chat', methods=['POST'])
 def process_chat():
@@ -999,6 +1295,7 @@ def process_telegram_message(message):
                 "/tap - Kumpulkan SawiCoin\n"
                 "/gupgrade - Upgrade tap power & energy game\n"
                 "/leaderboard - Peringkat pemain game\n"
+                "/play - Buka Mini App game\n"
                 "/stats - Lihat statistik bot\n"
                 "/setmodel <model> - Ubah model (admin)\n"
                 "/allow <chat_id> - Izinkan chat id (admin)\n"
@@ -1041,15 +1338,66 @@ def process_telegram_message(message):
             return
 
         if cmd == "/game":
+            webapp_url = f"{get_app_base_url()}/miniapp"
+            if not get_app_base_url():
+                send_telegram_message(
+                    chat_id=chat_id,
+                    text=(
+                        f"{_format_game_status(_load_game_state(chat_id))}\n\n"
+                        "Mini App belum aktif. Set environment APP_BASE_URL dulu, "
+                        "contoh: https://namaservice.koyeb.app"
+                    ),
+                )
+                return
+            keyboard = {
+                "inline_keyboard": [
+                    [
+                        {
+                            "text": "Play SawiPresto Revenge",
+                            "web_app": {"url": webapp_url},
+                        }
+                    ]
+                ]
+            }
             state = _load_game_state(chat_id)
             reply = (
                 f"{_format_game_status(state)}\n\n"
                 "Aksi:\n"
                 "/tap - Tap sekali\n"
                 "/gupgrade - Upgrade pemain\n"
-                "/leaderboard - Lihat peringkat"
+                "/leaderboard - Lihat peringkat\n"
+                "Atau tekan tombol Play untuk Mini App."
             )
-            send_telegram_message(chat_id=chat_id, text=reply)
+            send_telegram_message(
+                chat_id=chat_id,
+                text=reply,
+                extra_payload={"reply_markup": keyboard},
+            )
+            return
+
+        if cmd == "/play":
+            webapp_url = f"{get_app_base_url()}/miniapp"
+            if not get_app_base_url():
+                send_telegram_message(
+                    chat_id=chat_id,
+                    text="Mini App belum aktif. Set APP_BASE_URL di environment server.",
+                )
+                return
+            keyboard = {
+                "inline_keyboard": [
+                    [
+                        {
+                            "text": "Play SawiPresto Revenge",
+                            "web_app": {"url": webapp_url},
+                        }
+                    ]
+                ]
+            }
+            send_telegram_message(
+                chat_id=chat_id,
+                text=f"Buka {GAME_NAME} lewat Mini App:",
+                extra_payload={"reply_markup": keyboard},
+            )
             return
 
         if cmd == "/tap":
