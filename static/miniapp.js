@@ -9,8 +9,11 @@
 
     const els = {
         sceneBg: document.getElementById("scene-bg"),
+        playerName: document.getElementById("player-name"),
         level: document.getElementById("level-value"),
         coin: document.getElementById("coin-value"),
+        levelProgressBar: document.getElementById("level-progress-bar"),
+        levelProgressText: document.getElementById("level-progress-text"),
         energy: document.getElementById("energy-value"),
         energyBar: document.getElementById("energy-bar"),
         tap: document.getElementById("tap-value"),
@@ -137,6 +140,11 @@
 
         els.level.textContent = String(level);
         els.coin.textContent = String(coins);
+        const username = String(gameState.player_username || "").trim();
+        const displayName = username
+            ? `@${username}`
+            : (String(gameState.player_name || "").trim() || "Player");
+        els.playerName.textContent = displayName;
         els.tap.textContent = String(effectiveTap);
         els.energy.textContent = `${effectiveEnergy}/${effectiveMaxEnergy}`;
 
@@ -144,6 +152,12 @@
         els.energyBar.style.width = `${energyPercent}%`;
         const tapPercent = Math.max(8, Math.min(100, effectiveTap * 4));
         els.tapBar.style.width = `${tapPercent}%`;
+        const progress = gameState.level_progress || {};
+        const progressCurrent = Number(progress.current || 0);
+        const progressTarget = Math.max(1, Number(progress.target || 1));
+        const progressPct = Math.max(0, Math.min(100, (progressCurrent / progressTarget) * 100));
+        els.levelProgressBar.style.width = `${progressPct}%`;
+        els.levelProgressText.textContent = `${progressCurrent}/${progressTarget}`;
 
         const enemy = gameState.enemy || {};
         const enemyHp = Number(enemy.hp || 0);
@@ -195,7 +209,7 @@
         els.leaderboard.innerHTML = "";
         (data.leaderboard || []).forEach((row) => {
             const li = document.createElement("li");
-            li.textContent = `chat ${row.chat_id} - ${row.coins} coin (Lv ${row.level})`;
+            li.textContent = `${row.name || ("chat " + row.chat_id)} - ${row.coins} coin (Lv ${row.level})`;
             els.leaderboard.appendChild(li);
         });
     }

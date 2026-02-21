@@ -100,6 +100,45 @@ body {
     font-weight: 800;
 }
 
+.player-progress {
+    position: relative;
+    z-index: 2;
+    margin: 0 12px 8px;
+    padding: 8px 10px;
+    border: 1px solid #3d5e9a;
+    border-radius: 12px;
+    background: rgba(10, 23, 48, 0.72);
+}
+
+.player-progress-label {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: #d9e7ff;
+}
+
+.player-progress-bar {
+    margin-top: 5px;
+    height: 11px;
+    border-radius: 999px;
+    background: rgba(7, 17, 34, 0.78);
+    border: 1px solid #355794;
+    overflow: hidden;
+}
+
+.player-progress-bar i {
+    display: block;
+    width: 0%;
+    height: 100%;
+    background: linear-gradient(90deg, #22c55e, #84cc16);
+    transition: width 180ms ease;
+}
+
+.player-progress-text {
+    margin-top: 5px;
+    font-size: 0.77rem;
+    color: #c8d9ff;
+}
+
 .enemy-hud {
     position: relative;
     z-index: 2;
@@ -203,12 +242,12 @@ body {
 
 .fighter.player {
     justify-self: start;
-    width: 220px;
+    width: 200px;
 }
 
 .fighter.enemy {
     justify-self: end;
-    width: 180px;
+    width: 200px;
 }
 
 .fighter-layer {
@@ -490,11 +529,11 @@ body {
     }
 
     .fighter.player {
-        width: 176px;
+        width: 150px;
     }
 
     .fighter.enemy {
-        width: 142px;
+        width: 150px;
     }
 
     .skill-bar {

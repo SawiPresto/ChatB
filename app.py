@@ -40,7 +40,7 @@ TELEGRAM_PREMIUM_DURATION_DAYS = max(1, int(os.getenv("TELEGRAM_PREMIUM_DURATION
 TELEGRAM_PREMIUM_PLAN_NAME = os.getenv("TELEGRAM_PREMIUM_PLAN_NAME", "Premium 30 Hari").strip()
 GAME_NAME = "SawiPresto Revenge"
 GAME_ENERGY_REGEN_SECONDS = max(1, int(os.getenv("GAME_ENERGY_REGEN_SECONDS", "20")))
-GAME_DEFAULT_MAX_ENERGY = max(5, int(os.getenv("GAME_DEFAULT_MAX_ENERGY", "20")))
+GAME_DEFAULT_MAX_ENERGY = min(100, max(5, int(os.getenv("GAME_DEFAULT_MAX_ENERGY", "100"))))
 GAME_DEFAULT_TAP_POWER = max(1, int(os.getenv("GAME_DEFAULT_TAP_POWER", "1")))
 GAME_TAP_COOLDOWN_SECONDS = float(os.getenv("GAME_TAP_COOLDOWN_SECONDS", "0.35"))
 GAME_MAX_TAP_BATCH = max(1, int(os.getenv("GAME_MAX_TAP_BATCH", "10")))
@@ -208,6 +208,8 @@ def init_memory_store():
                 enemy_level INTEGER NOT NULL DEFAULT 1,
                 enemy_hp INTEGER NOT NULL DEFAULT 100,
                 enemy_max_hp INTEGER NOT NULL DEFAULT 100,
+                player_name TEXT NOT NULL DEFAULT '',
+                player_username TEXT NOT NULL DEFAULT '',
                 updated_at REAL NOT NULL,
                 weapon_id TEXT NOT NULL DEFAULT '',
                 pet_id TEXT NOT NULL DEFAULT '',
@@ -256,6 +258,8 @@ ensure_column_exists("telegram_game_state", "owned_items", "owned_items TEXT NOT
 ensure_column_exists("telegram_game_state", "enemy_level", "enemy_level INTEGER NOT NULL DEFAULT 1")
 ensure_column_exists("telegram_game_state", "enemy_hp", "enemy_hp INTEGER NOT NULL DEFAULT 100")
 ensure_column_exists("telegram_game_state", "enemy_max_hp", "enemy_max_hp INTEGER NOT NULL DEFAULT 100")
+ensure_column_exists("telegram_game_state", "player_name", "player_name TEXT NOT NULL DEFAULT ''")
+ensure_column_exists("telegram_game_state", "player_username", "player_username TEXT NOT NULL DEFAULT ''")
 
 
 def get_telegram_token():
@@ -464,7 +468,12 @@ def verify_telegram_webapp_init_data(init_data):
     user_id = user_data.get("id")
     if not user_id:
         return False, "User id tidak ditemukan.", None
-    return True, "", int(user_id)
+    return True, "", {
+        "id": int(user_id),
+        "username": str(user_data.get("username") or "").strip(),
+        "first_name": str(user_data.get("first_name") or "").strip(),
+        "last_name": str(user_data.get("last_name") or "").strip(),
+    }
 
 
 load_runtime_model()
@@ -619,6 +628,22 @@ def _enemy_spec(level):
     return GAME_ENEMY_LEVELS[safe_level - 1]
 
 
+def update_player_profile(chat_id, user_info):
+    first_name = str((user_info or {}).get("first_name") or "").strip()
+    last_name = str((user_info or {}).get("last_name") or "").strip()
+    full_name = " ".join([part for part in [first_name, last_name] if part]).strip()
+    username = str((user_info or {}).get("username") or "").strip()
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            UPDATE telegram_game_state
+            SET player_name = ?, player_username = ?
+            WHERE chat_id = ?
+            """,
+            (full_name, username, str(chat_id)),
+        )
+
+
 def _ensure_game_state(chat_id):
     now = time.time()
     chat_key = str(chat_id)
@@ -628,9 +653,10 @@ def _ensure_game_state(chat_id):
             """
             INSERT INTO telegram_game_state(
                 chat_id, coins, energy, max_energy, tap_power, level, updated_at,
-                weapon_id, pet_id, skin_id, owned_items, enemy_level, enemy_hp, enemy_max_hp
+                weapon_id, pet_id, skin_id, owned_items, enemy_level, enemy_hp, enemy_max_hp,
+                player_name, player_username
             )
-            VALUES (?, 0, ?, ?, ?, 1, ?, '', '', '', '[]', ?, ?, ?)
+            VALUES (?, 0, ?, ?, ?, 1, ?, '', '', '', '[]', ?, ?, ?, '', '')
             ON CONFLICT(chat_id) DO NOTHING
             """,
             (
@@ -656,7 +682,7 @@ def _load_game_state(chat_id):
             SELECT
                 coins, energy, max_energy, tap_power, level,
                 enemy_level, enemy_hp, enemy_max_hp,
-                updated_at, weapon_id, pet_id, skin_id, owned_items
+                updated_at, weapon_id, pet_id, skin_id, owned_items, player_name, player_username
             FROM telegram_game_state
             WHERE chat_id = ?
             """,
@@ -679,6 +705,8 @@ def _load_game_state(chat_id):
             pet_id,
             skin_id,
             owned_items,
+            player_name,
+            player_username,
         ) = row
         enemy = _enemy_spec(enemy_level)
         if int(enemy_max_hp) <= 0 or int(enemy_max_hp) != int(enemy["hp"]):
@@ -693,6 +721,13 @@ def _load_game_state(chat_id):
                 (enemy["level"], enemy_hp, enemy_max_hp, chat_key),
             )
         elapsed = max(0.0, now - float(updated_at))
+        max_energy = min(100, int(max_energy))
+        if int(energy) > max_energy:
+            energy = max_energy
+            conn.execute(
+                "UPDATE telegram_game_state SET energy = ?, max_energy = ? WHERE chat_id = ?",
+                (energy, max_energy, chat_key),
+            )
         regen_units = int(elapsed // GAME_ENERGY_REGEN_SECONDS)
         if regen_units > 0 and int(energy) < int(max_energy):
             new_energy = min(int(max_energy), int(energy) + regen_units)
@@ -719,6 +754,8 @@ def _load_game_state(chat_id):
         "enemy_level": int(enemy["level"]),
         "enemy_hp": int(enemy_hp),
         "enemy_max_hp": int(enemy_max_hp),
+        "player_name": player_name or "",
+        "player_username": player_username or "",
         "weapon_id": weapon_id or "",
         "pet_id": pet_id or "",
         "skin_id": skin_id or "",
@@ -787,7 +824,7 @@ def _effective_tap_power(state):
 
 def _effective_max_energy(state):
     bonus = _calculate_equipment_bonus(state)
-    return int(state["max_energy"]) + int(bonus["total_energy_bonus"])
+    return min(100, int(state["max_energy"]) + int(bonus["total_energy_bonus"]))
 
 
 def _decorate_game_state(state):
@@ -816,6 +853,11 @@ def _decorate_game_state(state):
         "weapon_bonus": bonus["weapon_tap_bonus"],
         "pet_bonus": bonus["pet_tap_bonus"],
         "skin_bonus": bonus["skin_tap_bonus"],
+    }
+    level_cost = max(50, int(state["level"]) * 50)
+    state["level_progress"] = {
+        "current": min(int(state["coins"]), level_cost),
+        "target": level_cost,
     }
     state["equipment"] = equipment
     state["owned_items"] = [item for item in owned_items if item in GAME_SHOP_ITEMS]
@@ -941,7 +983,7 @@ def game_upgrade(chat_id):
 
     new_level = state["level"] + 1
     new_tap_power = state["tap_power"] + 1
-    new_max_energy = state["max_energy"] + 2
+    new_max_energy = min(100, state["max_energy"] + 2)
     new_coins = state["coins"] - cost
     new_energy = min(state["energy"], new_max_energy)
     with get_db_connection() as conn:
@@ -1011,7 +1053,7 @@ def game_leaderboard(limit=10):
     with get_db_connection() as conn:
         rows = conn.execute(
             """
-            SELECT chat_id, coins, level
+            SELECT chat_id, coins, level, player_name, player_username
             FROM telegram_game_state
             ORDER BY coins DESC, level DESC
             LIMIT ?
@@ -1025,8 +1067,11 @@ def game_leaderboard(limit=10):
     lines = [f"Leaderboard {GAME_NAME}:"]
     rank = 1
     for row in rows:
-        chat_id, coins, level = row
-        lines.append(f"{rank}. chat {chat_id} - {int(coins)} coin (Lv {int(level)})")
+        chat_id, coins, level, player_name, player_username = row
+        display_name = f"@{player_username}" if str(player_username or "").strip() else (
+            str(player_name).strip() if str(player_name or "").strip() else f"chat {chat_id}"
+        )
+        lines.append(f"{rank}. {display_name} - {int(coins)} coin (Lv {int(level)})")
         rank += 1
     return "\n".join(lines)
 
@@ -1402,12 +1447,15 @@ def miniapp():
 def api_game_auth():
     payload = request.get_json(silent=True) or {}
     init_data = payload.get("initData", "")
-    ok, error_message, user_id = verify_telegram_webapp_init_data(init_data)
+    ok, error_message, user_info = verify_telegram_webapp_init_data(init_data)
     if not ok:
         return jsonify({"error": error_message}), 403
+    user_id = int(user_info["id"])
     if not is_chat_allowed(user_id):
         return jsonify({"error": "Chat belum diizinkan memakai game."}), 403
 
+    _ensure_game_state(user_id)
+    update_player_profile(user_id, user_info)
     token, expires_at = create_miniapp_session(user_id)
     state = _decorate_game_state(_load_game_state(user_id))
     return jsonify({
@@ -1535,14 +1583,22 @@ def api_game_leaderboard():
     with get_db_connection() as conn:
         rows = conn.execute(
             """
-            SELECT chat_id, coins, level
+            SELECT chat_id, coins, level, player_name, player_username
             FROM telegram_game_state
             ORDER BY coins DESC, level DESC
             LIMIT 20
             """
         ).fetchall()
     data = [
-        {"chat_id": str(row[0]), "coins": int(row[1]), "level": int(row[2])}
+        {
+            "chat_id": str(row[0]),
+            "coins": int(row[1]),
+            "level": int(row[2]),
+            "name": (
+                ("@" + str(row[4]).strip()) if str(row[4] or "").strip()
+                else (str(row[3]).strip() if str(row[3] or "").strip() else f"chat {row[0]}")
+            ),
+        }
         for row in rows
     ]
     return jsonify({"ok": True, "leaderboard": data}), 200
