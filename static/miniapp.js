@@ -8,23 +8,37 @@
     };
 
     const els = {
+        sceneBg: document.getElementById("scene-bg"),
         level: document.getElementById("level-value"),
         coin: document.getElementById("coin-value"),
-        tap: document.getElementById("tap-value"),
         energy: document.getElementById("energy-value"),
+        energyBar: document.getElementById("energy-bar"),
+        tap: document.getElementById("tap-value"),
+        tapBar: document.getElementById("tap-bar"),
         weaponSlot: document.getElementById("weapon-slot"),
         petSlot: document.getElementById("pet-slot"),
         skinSlot: document.getElementById("skin-slot"),
-        weaponVisual: document.getElementById("weapon-visual"),
         charFallback: document.getElementById("char-fallback"),
-        charArt: document.getElementById("char-art"),
+        enemyFallback: document.getElementById("enemy-fallback"),
         charBaseImg: document.getElementById("char-base-img"),
         charSkinImg: document.getElementById("char-skin-img"),
         charWeaponImg: document.getElementById("char-weapon-img"),
         charPetImg: document.getElementById("char-pet-img"),
+        enemyBaseImg: document.getElementById("enemy-base-img"),
+        playerFighter: document.getElementById("player-fighter"),
+        enemyFighter: document.getElementById("enemy-fighter"),
+        slashFx: document.getElementById("slash-fx"),
+        hitFx: document.getElementById("hit-fx"),
+        damageLayer: document.getElementById("damage-layer"),
         tapBtn: document.getElementById("tap-btn"),
         upgradeBtn: document.getElementById("upgrade-btn"),
+        inventoryBtn: document.getElementById("inventory-btn"),
+        leaderboardBtn: document.getElementById("leaderboard-btn"),
         refreshBtn: document.getElementById("refresh-btn"),
+        inventoryPanel: document.getElementById("inventory-panel"),
+        closeInventory: document.getElementById("close-inventory"),
+        leaderboardPanel: document.getElementById("leaderboard-panel"),
+        closeLeaderboard: document.getElementById("close-leaderboard"),
         leaderboard: document.getElementById("leaderboard-list"),
         shopGrid: document.getElementById("shop-grid"),
         status: document.getElementById("status-text"),
@@ -38,28 +52,61 @@
         return equipment && equipment.name ? equipment.name : "None";
     }
 
-    function setWeaponVisual(weaponId) {
-        const node = els.weaponVisual;
-        node.classList.remove("weapon-none", "weapon-bamboo", "weapon-shadow", "weapon-quantum");
-        if (!weaponId) {
-            node.classList.add("weapon-none");
-            return;
-        }
-        if (weaponId === "weapon_bamboo_spear") node.classList.add("weapon-bamboo");
-        else if (weaponId === "weapon_shadow_blade") node.classList.add("weapon-shadow");
-        else if (weaponId === "weapon_quantum_cleaver") node.classList.add("weapon-quantum");
-        else node.classList.add("weapon-none");
-    }
-
-    function setImgIfExists(node, src) {
+    function setImg(node, src, fallbackNode) {
         if (!node) return;
         if (!src) {
             node.removeAttribute("src");
             node.style.display = "none";
+            if (fallbackNode) fallbackNode.style.display = "block";
             return;
         }
         node.src = src;
         node.style.display = "block";
+        node.onerror = function () {
+            node.style.display = "none";
+            if (fallbackNode) fallbackNode.style.display = "block";
+        };
+        node.onload = function () {
+            if (fallbackNode) fallbackNode.style.display = "none";
+        };
+    }
+
+    function applySceneConfig() {
+        if (state.config.battle_bg_asset) {
+            els.sceneBg.style.backgroundImage = `url('${state.config.battle_bg_asset}')`;
+        } else {
+            els.sceneBg.style.backgroundImage =
+                "radial-gradient(circle at 50% 30%, #2e7d32, #0b3a22 55%, #082116)";
+        }
+        setImg(els.enemyBaseImg, state.config.enemy_base_asset || "", els.enemyFallback);
+    }
+
+    function spawnDamage(value) {
+        const node = document.createElement("span");
+        node.className = "damage";
+        node.textContent = String(value);
+        node.style.left = `${62 + Math.random() * 12}%`;
+        node.style.top = `${42 + Math.random() * 10}%`;
+        els.damageLayer.appendChild(node);
+        setTimeout(() => {
+            node.remove();
+        }, 820);
+    }
+
+    function triggerAttackFx(damage) {
+        els.playerFighter.classList.add("attacking");
+        els.enemyFighter.classList.add("hit");
+        els.slashFx.classList.add("active");
+        els.hitFx.classList.add("active");
+        if (damage > 0) {
+            spawnDamage(damage);
+        }
+        setTimeout(() => {
+            els.playerFighter.classList.remove("attacking");
+            els.enemyFighter.classList.remove("hit");
+            els.slashFx.classList.remove("active");
+            els.hitFx.classList.remove("active");
+        }, 260);
     }
 
     function applyCharacterArt(gameState) {
@@ -67,34 +114,43 @@
         const skinAsset = gameState && gameState.equipment && gameState.equipment.skin ? gameState.equipment.skin.asset : "";
         const weaponAsset = gameState && gameState.equipment && gameState.equipment.weapon ? gameState.equipment.weapon.asset : "";
         const petAsset = gameState && gameState.equipment && gameState.equipment.pet ? gameState.equipment.pet.asset : "";
-
-        const hasAny = Boolean(baseAsset || skinAsset || weaponAsset || petAsset);
-        if (!hasAny) {
-            els.charArt.classList.remove("active");
-            els.charFallback.style.display = "block";
-            return;
-        }
-
-        setImgIfExists(els.charBaseImg, baseAsset);
-        setImgIfExists(els.charSkinImg, skinAsset);
-        setImgIfExists(els.charWeaponImg, weaponAsset);
-        setImgIfExists(els.charPetImg, petAsset);
-        els.charArt.classList.add("active");
-        els.charFallback.style.display = "none";
+        setImg(els.charBaseImg, baseAsset, els.charFallback);
+        setImg(els.charSkinImg, skinAsset);
+        setImg(els.charWeaponImg, weaponAsset);
+        setImg(els.charPetImg, petAsset);
     }
 
     function applyState(gameState) {
         if (!gameState) return;
         state.game = gameState;
-        els.level.textContent = String(gameState.level);
-        els.coin.textContent = String(gameState.coins);
-        els.tap.textContent = String(gameState.effective_tap_power || gameState.tap_power);
-        els.energy.textContent = `${gameState.effective_energy}/${gameState.effective_max_energy}`;
+
+        const level = Number(gameState.level || 1);
+        const coins = Number(gameState.coins || 0);
+        const effectiveTap = Number(gameState.effective_tap_power || gameState.tap_power || 1);
+        const effectiveEnergy = Number(gameState.effective_energy || 0);
+        const effectiveMaxEnergy = Number(gameState.effective_max_energy || gameState.max_energy || 1);
+
+        els.level.textContent = String(level);
+        els.coin.textContent = String(coins);
+        els.tap.textContent = String(effectiveTap);
+        els.energy.textContent = `${effectiveEnergy}/${effectiveMaxEnergy}`;
+
+        const energyPercent = Math.max(0, Math.min(100, (effectiveEnergy / Math.max(1, effectiveMaxEnergy)) * 100));
+        els.energyBar.style.width = `${energyPercent}%`;
+        const tapPercent = Math.max(8, Math.min(100, effectiveTap * 4));
+        els.tapBar.style.width = `${tapPercent}%`;
+
         els.weaponSlot.textContent = getEquipmentName(gameState.equipment && gameState.equipment.weapon);
         els.petSlot.textContent = getEquipmentName(gameState.equipment && gameState.equipment.pet);
         els.skinSlot.textContent = getEquipmentName(gameState.equipment && gameState.equipment.skin);
-        setWeaponVisual(gameState.weapon_id);
+
         applyCharacterArt(gameState);
+    }
+
+    function togglePanel(panel, forceOpen) {
+        const open = typeof forceOpen === "boolean" ? forceOpen : panel.classList.contains("hidden");
+        if (open) panel.classList.remove("hidden");
+        else panel.classList.add("hidden");
     }
 
     async function api(path, method = "GET", body = null, withIdempotency = false) {
@@ -175,13 +231,18 @@
             const data = await api("/api/game/tap", "POST", { tap_count: 1 }, true);
             applyState(data.state);
             renderShop();
-            setStatus(data.tapped ? `+${data.gained} coin` : "Energy habis atau tap terlalu cepat.");
+            if (data.tapped) {
+                triggerAttackFx(data.gained);
+                setStatus(`Critical slash! +${data.gained} coin`);
+            } else {
+                setStatus("Energy habis atau tap terlalu cepat.");
+            }
         } catch (err) {
             setStatus(err.message);
         } finally {
             setTimeout(() => {
                 els.tapBtn.disabled = false;
-            }, 220);
+            }, 180);
         }
     }
 
@@ -191,7 +252,7 @@
             const data = await api("/api/game/upgrade", "POST", {}, true);
             applyState(data.state);
             renderShop();
-            setStatus(data.upgraded ? `Upgrade sukses. Biaya ${data.cost}.` : `Coin kurang. Butuh ${data.cost}.`);
+            setStatus(data.upgraded ? `Level up berhasil. Biaya ${data.cost}.` : `Coin kurang. Butuh ${data.cost}.`);
         } catch (err) {
             setStatus(err.message);
         } finally {
@@ -206,16 +267,20 @@
         }
         tg.ready();
         tg.expand();
-        setStatus("Sinkronisasi akun...");
+        setStatus("Memuat arena battle...");
+
         try {
             const auth = await api("/api/game/auth", "POST", { initData: tg.initData });
             state.token = auth.token;
             state.catalog = Array.isArray(auth.catalog) ? auth.catalog : [];
             state.config = auth.config || {};
+
+            applySceneConfig();
             applyState(auth.state);
             renderShop();
             await loadLeaderboard();
-            setStatus("SawiPresto Revenge siap dimainkan.");
+
+            setStatus("Arena siap. Tap untuk menyerang!");
         } catch (err) {
             setStatus(`Auth gagal: ${err.message}`);
         }
@@ -227,16 +292,32 @@
         try {
             await refreshState();
             await loadLeaderboard();
-            setStatus("Data diperbarui.");
+            setStatus("Sinkronisasi sukses.");
         } catch (err) {
             setStatus(err.message);
         }
     });
 
+    els.inventoryBtn.addEventListener("click", () => {
+        togglePanel(els.inventoryPanel);
+        togglePanel(els.leaderboardPanel, false);
+    });
+    els.leaderboardBtn.addEventListener("click", async () => {
+        togglePanel(els.leaderboardPanel);
+        togglePanel(els.inventoryPanel, false);
+        if (!els.leaderboardPanel.classList.contains("hidden")) {
+            try {
+                await loadLeaderboard();
+            } catch (_) {}
+        }
+    });
+    els.closeInventory.addEventListener("click", () => togglePanel(els.inventoryPanel, false));
+    els.closeLeaderboard.addEventListener("click", () => togglePanel(els.leaderboardPanel, false));
+
     setInterval(() => {
         if (!state.token) return;
         refreshState().catch(() => {});
-    }, 5000);
+    }, 4500);
 
     bootstrap();
 })();

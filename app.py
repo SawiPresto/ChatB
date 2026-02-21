@@ -50,6 +50,14 @@ GAME_CHARACTER_BASE_ASSET = os.getenv(
     "GAME_CHARACTER_BASE_ASSET",
     "/static/game-assets/characters/sawipresto-base.png",
 ).strip()
+GAME_BATTLE_BG_ASSET = os.getenv(
+    "GAME_BATTLE_BG_ASSET",
+    "/static/game-assets/backgrounds/forest-battle.webp",
+).strip()
+GAME_ENEMY_BASE_ASSET = os.getenv(
+    "GAME_ENEMY_BASE_ASSET",
+    "/static/game-assets/enemies/enemy-scout.png",
+).strip()
 APP_STARTED_AT = time.time()
 runtime_config = {"model": DEFAULT_MODEL}
 
@@ -1295,6 +1303,8 @@ def api_game_auth():
             "max_tap_batch": GAME_MAX_TAP_BATCH,
             "energy_regen_seconds": GAME_ENERGY_REGEN_SECONDS,
             "character_base_asset": GAME_CHARACTER_BASE_ASSET,
+            "battle_bg_asset": GAME_BATTLE_BG_ASSET,
+            "enemy_base_asset": GAME_ENEMY_BASE_ASSET,
         },
         "catalog": get_game_catalog(),
     }), 200

@@ -7,6 +7,8 @@ Recommended formats
 
 Suggested files
 - characters/sawipresto-base.png
+- backgrounds/forest-battle.webp
+- enemies/enemy-scout.png
 - weapons/bamboo-spear.png
 - weapons/shadow-blade.png
 - weapons/quantum-cleaver.png
@@ -21,4 +23,7 @@ Recommended sizes
 
 Custom assets
 - Replace files with the same names to update visuals immediately.
-- Or edit item asset paths in app.py (`GAME_SHOP_ITEMS`) and env var `GAME_CHARACTER_BASE_ASSET`.
+- Or edit item asset paths in app.py (`GAME_SHOP_ITEMS`) and env vars:
+  - `GAME_CHARACTER_BASE_ASSET`
+  - `GAME_BATTLE_BG_ASSET`
+  - `GAME_ENEMY_BASE_ASSET`

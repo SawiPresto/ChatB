@@ -6,70 +6,89 @@
     <title>{{ game_name }}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='miniapp.css') }}">
 </head>
 <body>
-    <main class="app">
-        <header class="panel hero">
-            <div>
-                <h1 id="game-title">{{ game_name }}</h1>
-                <p class="muted">Cyber cabage rogue run. Build, gear, conquer.</p>
-            </div>
-            <div class="hero-badge">Mini App</div>
-        </header>
+    <main class="battle-app">
+        <section id="battle-scene" class="battle-scene">
+            <div class="scene-bg" id="scene-bg"></div>
+            <div class="scene-vignette"></div>
 
-        <section class="grid">
-            <div class="panel character-panel">
-                <h2>Karakter</h2>
-                <div class="character-stage">
-                    <div class="char-glow"></div>
-                    <div class="char-cat" id="char-fallback">
-                        <div class="cat-ears"></div>
-                        <div class="cat-face"></div>
-                        <div class="cat-weapon weapon-none" id="weapon-visual"></div>
-                    </div>
-                    <div class="char-art" id="char-art">
-                        <img id="char-base-img" class="char-layer" alt="Character base">
-                        <img id="char-skin-img" class="char-layer" alt="Character skin">
-                        <img id="char-weapon-img" class="char-layer" alt="Character weapon">
-                        <img id="char-pet-img" class="char-layer pet-layer" alt="Character pet">
+            <header class="hud-top">
+                <div class="hero-chip">
+                    <div class="avatar-dot"></div>
+                    <div>
+                        <div class="chip-title">LEVEL <span id="level-value">1</span></div>
+                        <div class="chip-sub">SawiPresto Revenge</div>
                     </div>
                 </div>
-                <div class="loadout">
-                    <div><span>Weapon</span><strong id="weapon-slot">None</strong></div>
-                    <div><span>Pet</span><strong id="pet-slot">None</strong></div>
-                    <div><span>Skin</span><strong id="skin-slot">None</strong></div>
+                <div class="coin-chip">🪙 <span id="coin-value">0</span></div>
+            </header>
+
+            <div class="bar-stack">
+                <div class="bar-wrap">
+                    <span>ENERGY</span>
+                    <div class="bar"><i id="energy-bar"></i></div>
+                    <b id="energy-value">0/0</b>
+                </div>
+                <div class="bar-wrap">
+                    <span>TAP POWER</span>
+                    <div class="bar blue"><i id="tap-bar"></i></div>
+                    <b id="tap-value">0</b>
                 </div>
             </div>
 
-            <div class="panel stats">
-                <h2>Stat</h2>
-                <div class="stat-list">
-                    <div><span class="label">Level</span><strong id="level-value">1</strong></div>
-                    <div><span class="label">SawiCoin</span><strong id="coin-value">0</strong></div>
-                    <div><span class="label">Tap Power</span><strong id="tap-value">1</strong></div>
-                    <div><span class="label">Energy</span><strong id="energy-value">0/0</strong></div>
+            <div class="arena">
+                <div class="fighter player" id="player-fighter">
+                    <img id="char-base-img" class="fighter-layer" alt="Hero base">
+                    <img id="char-skin-img" class="fighter-layer" alt="Hero skin">
+                    <img id="char-weapon-img" class="fighter-layer weapon-layer" alt="Hero weapon">
+                    <img id="char-pet-img" class="fighter-layer pet-layer" alt="Hero pet">
+                    <div id="char-fallback" class="fallback-hero"></div>
                 </div>
-                <div class="actions">
-                    <button id="tap-btn" class="btn primary">Attack / Tap</button>
-                    <button id="upgrade-btn" class="btn">Level Upgrade</button>
-                    <button id="refresh-btn" class="btn ghost">Refresh</button>
+
+                <div class="slash fx" id="slash-fx"></div>
+                <div class="hit fx" id="hit-fx"></div>
+                <div id="damage-layer" class="damage-layer"></div>
+
+                <div class="fighter enemy" id="enemy-fighter">
+                    <img id="enemy-base-img" class="fighter-layer enemy-layer" alt="Enemy">
+                    <div id="enemy-fallback" class="fallback-enemy"></div>
                 </div>
             </div>
+
+            <footer class="skill-bar">
+                <button id="tap-btn" class="skill main">Attack</button>
+                <button id="upgrade-btn" class="skill">Level Up</button>
+                <button id="inventory-btn" class="skill">Armory</button>
+                <button id="leaderboard-btn" class="skill">Rank</button>
+                <button id="refresh-btn" class="skill ghost">Sync</button>
+            </footer>
         </section>
 
-        <section class="panel">
-            <h2>Armory & Items</h2>
+        <section id="inventory-panel" class="overlay-panel hidden">
+            <div class="panel-head">
+                <h2>Armory & Equipment</h2>
+                <button id="close-inventory" class="close-btn">Tutup</button>
+            </div>
+            <div class="loadout">
+                <div><span>Weapon</span><strong id="weapon-slot">None</strong></div>
+                <div><span>Pet</span><strong id="pet-slot">None</strong></div>
+                <div><span>Skin</span><strong id="skin-slot">None</strong></div>
+            </div>
             <div id="shop-grid" class="shop-grid"></div>
         </section>
 
-        <section class="panel">
-            <h2>Leaderboard</h2>
+        <section id="leaderboard-panel" class="overlay-panel hidden">
+            <div class="panel-head">
+                <h2>Leaderboard</h2>
+                <button id="close-leaderboard" class="close-btn">Tutup</button>
+            </div>
             <ol id="leaderboard-list" class="leaderboard"></ol>
         </section>
 
-        <p id="status-text" class="status"></p>
+        <p id="status-text" class="status">Menyiapkan arena...</p>
     </main>
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
