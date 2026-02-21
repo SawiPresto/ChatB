@@ -17,20 +17,15 @@
 
             <header class="hud-top">
                 <div class="hero-chip">
-                    <div class="avatar-dot"></div>
+                    <img id="player-avatar" class="avatar-dot" alt="Avatar">
                     <div>
                         <div class="chip-title">LEVEL <span id="level-value">1</span></div>
                         <div class="chip-sub" id="player-name">Player</div>
+                        <div class="chip-mini-progress"><i id="level-progress-bar"></i></div>
                     </div>
                 </div>
                 <div class="coin-chip">🪙 <span id="coin-value">0</span></div>
             </header>
-
-            <div class="player-progress">
-                <div class="player-progress-label">Progress Level</div>
-                <div class="player-progress-bar"><i id="level-progress-bar"></i></div>
-                <div class="player-progress-text"><span id="level-progress-text">0/50</span></div>
-            </div>
 
             <div class="enemy-hud">
                 <div class="enemy-name"><span id="enemy-name">Enemy Scout</span> (Lv <span id="enemy-level">1</span>)</div>
@@ -72,7 +67,7 @@
 
             <footer class="skill-bar">
                 <button id="tap-btn" class="skill main">Attack</button>
-                <button id="upgrade-btn" class="skill">Level Up</button>
+                <button id="upgrade-btn" class="skill">Info Lv</button>
                 <button id="inventory-btn" class="skill">Armory</button>
                 <button id="leaderboard-btn" class="skill">Rank</button>
                 <button id="refresh-btn" class="skill ghost">Sync</button>

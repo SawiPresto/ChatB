@@ -84,6 +84,7 @@ body {
     border-radius: 999px;
     background: radial-gradient(circle at 30% 30%, #fef08a, #84cc16 70%);
     border: 2px solid #9dbd2b;
+    object-fit: cover;
 }
 
 .chip-title {
@@ -100,43 +101,22 @@ body {
     font-weight: 800;
 }
 
-.player-progress {
-    position: relative;
-    z-index: 2;
-    margin: 0 12px 8px;
-    padding: 8px 10px;
-    border: 1px solid #3d5e9a;
-    border-radius: 12px;
-    background: rgba(10, 23, 48, 0.72);
-}
-
-.player-progress-label {
-    font-size: 0.78rem;
-    font-weight: 700;
-    color: #d9e7ff;
-}
-
-.player-progress-bar {
-    margin-top: 5px;
-    height: 11px;
+.chip-mini-progress {
+    margin-top: 4px;
+    width: 132px;
+    height: 6px;
     border-radius: 999px;
-    background: rgba(7, 17, 34, 0.78);
-    border: 1px solid #355794;
+    background: rgba(7, 17, 34, 0.9);
+    border: 1px solid rgba(72, 107, 173, 0.7);
     overflow: hidden;
 }
 
-.player-progress-bar i {
+.chip-mini-progress i {
     display: block;
     width: 0%;
     height: 100%;
     background: linear-gradient(90deg, #22c55e, #84cc16);
     transition: width 180ms ease;
-}
-
-.player-progress-text {
-    margin-top: 5px;
-    font-size: 0.77rem;
-    color: #c8d9ff;
 }
 
 .enemy-hud {

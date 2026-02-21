@@ -9,11 +9,11 @@
 
     const els = {
         sceneBg: document.getElementById("scene-bg"),
+        playerAvatar: document.getElementById("player-avatar"),
         playerName: document.getElementById("player-name"),
         level: document.getElementById("level-value"),
         coin: document.getElementById("coin-value"),
         levelProgressBar: document.getElementById("level-progress-bar"),
-        levelProgressText: document.getElementById("level-progress-text"),
         energy: document.getElementById("energy-value"),
         energyBar: document.getElementById("energy-bar"),
         tap: document.getElementById("tap-value"),
@@ -145,6 +145,7 @@
             ? `@${username}`
             : (String(gameState.player_name || "").trim() || "Player");
         els.playerName.textContent = displayName;
+        setImg(els.playerAvatar, gameState.player_photo_url || "", null);
         els.tap.textContent = String(effectiveTap);
         els.energy.textContent = `${effectiveEnergy}/${effectiveMaxEnergy}`;
 
@@ -157,7 +158,6 @@
         const progressTarget = Math.max(1, Number(progress.target || 1));
         const progressPct = Math.max(0, Math.min(100, (progressCurrent / progressTarget) * 100));
         els.levelProgressBar.style.width = `${progressPct}%`;
-        els.levelProgressText.textContent = `${progressCurrent}/${progressTarget}`;
 
         const enemy = gameState.enemy || {};
         const enemyHp = Number(enemy.hp || 0);
@@ -275,6 +275,9 @@
                 } else {
                     setStatus(`Critical slash! ${data.damage} dmg, +${data.gained} coin`);
                 }
+                if (Number(data.player_level_up || 0) > 0) {
+                    setStatus(`Level Up +${data.player_level_up}! ${els.playerName.textContent} makin kuat.`);
+                }
             } else {
                 setStatus("Energy habis atau tap terlalu cepat.");
             }
@@ -288,17 +291,7 @@
     }
 
     async function handleUpgrade() {
-        els.upgradeBtn.disabled = true;
-        try {
-            const data = await api("/api/game/upgrade", "POST", {}, true);
-            applyState(data.state);
-            renderShop();
-            setStatus(data.upgraded ? `Level up berhasil. Biaya ${data.cost}.` : `Coin kurang. Butuh ${data.cost}.`);
-        } catch (err) {
-            setStatus(err.message);
-        } finally {
-            els.upgradeBtn.disabled = false;
-        }
+        setStatus("Level naik otomatis saat progress bar penuh.");
     }
 
     async function bootstrap() {

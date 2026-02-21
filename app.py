@@ -208,8 +208,10 @@ def init_memory_store():
                 enemy_level INTEGER NOT NULL DEFAULT 1,
                 enemy_hp INTEGER NOT NULL DEFAULT 100,
                 enemy_max_hp INTEGER NOT NULL DEFAULT 100,
+                player_xp INTEGER NOT NULL DEFAULT 0,
                 player_name TEXT NOT NULL DEFAULT '',
                 player_username TEXT NOT NULL DEFAULT '',
+                player_photo_url TEXT NOT NULL DEFAULT '',
                 updated_at REAL NOT NULL,
                 weapon_id TEXT NOT NULL DEFAULT '',
                 pet_id TEXT NOT NULL DEFAULT '',
@@ -258,8 +260,10 @@ ensure_column_exists("telegram_game_state", "owned_items", "owned_items TEXT NOT
 ensure_column_exists("telegram_game_state", "enemy_level", "enemy_level INTEGER NOT NULL DEFAULT 1")
 ensure_column_exists("telegram_game_state", "enemy_hp", "enemy_hp INTEGER NOT NULL DEFAULT 100")
 ensure_column_exists("telegram_game_state", "enemy_max_hp", "enemy_max_hp INTEGER NOT NULL DEFAULT 100")
+ensure_column_exists("telegram_game_state", "player_xp", "player_xp INTEGER NOT NULL DEFAULT 0")
 ensure_column_exists("telegram_game_state", "player_name", "player_name TEXT NOT NULL DEFAULT ''")
 ensure_column_exists("telegram_game_state", "player_username", "player_username TEXT NOT NULL DEFAULT ''")
+ensure_column_exists("telegram_game_state", "player_photo_url", "player_photo_url TEXT NOT NULL DEFAULT ''")
 
 
 def get_telegram_token():
@@ -473,6 +477,7 @@ def verify_telegram_webapp_init_data(init_data):
         "username": str(user_data.get("username") or "").strip(),
         "first_name": str(user_data.get("first_name") or "").strip(),
         "last_name": str(user_data.get("last_name") or "").strip(),
+        "photo_url": str(user_data.get("photo_url") or "").strip(),
     }
 
 
@@ -633,14 +638,15 @@ def update_player_profile(chat_id, user_info):
     last_name = str((user_info or {}).get("last_name") or "").strip()
     full_name = " ".join([part for part in [first_name, last_name] if part]).strip()
     username = str((user_info or {}).get("username") or "").strip()
+    photo_url = str((user_info or {}).get("photo_url") or "").strip()
     with get_db_connection() as conn:
         conn.execute(
             """
             UPDATE telegram_game_state
-            SET player_name = ?, player_username = ?
+            SET player_name = ?, player_username = ?, player_photo_url = ?
             WHERE chat_id = ?
             """,
-            (full_name, username, str(chat_id)),
+            (full_name, username, photo_url, str(chat_id)),
         )
 
 
@@ -654,9 +660,9 @@ def _ensure_game_state(chat_id):
             INSERT INTO telegram_game_state(
                 chat_id, coins, energy, max_energy, tap_power, level, updated_at,
                 weapon_id, pet_id, skin_id, owned_items, enemy_level, enemy_hp, enemy_max_hp,
-                player_name, player_username
+                player_xp, player_name, player_username, player_photo_url
             )
-            VALUES (?, 0, ?, ?, ?, 1, ?, '', '', '', '[]', ?, ?, ?, '', '')
+            VALUES (?, 0, ?, ?, ?, 1, ?, '', '', '', '[]', ?, ?, ?, 0, '', '', '')
             ON CONFLICT(chat_id) DO NOTHING
             """,
             (
@@ -682,7 +688,7 @@ def _load_game_state(chat_id):
             SELECT
                 coins, energy, max_energy, tap_power, level,
                 enemy_level, enemy_hp, enemy_max_hp,
-                updated_at, weapon_id, pet_id, skin_id, owned_items, player_name, player_username
+                updated_at, weapon_id, pet_id, skin_id, owned_items, player_xp, player_name, player_username, player_photo_url
             FROM telegram_game_state
             WHERE chat_id = ?
             """,
@@ -705,8 +711,10 @@ def _load_game_state(chat_id):
             pet_id,
             skin_id,
             owned_items,
+            player_xp,
             player_name,
             player_username,
+            player_photo_url,
         ) = row
         enemy = _enemy_spec(enemy_level)
         if int(enemy_max_hp) <= 0 or int(enemy_max_hp) != int(enemy["hp"]):
@@ -754,8 +762,10 @@ def _load_game_state(chat_id):
         "enemy_level": int(enemy["level"]),
         "enemy_hp": int(enemy_hp),
         "enemy_max_hp": int(enemy_max_hp),
+        "player_xp": int(player_xp),
         "player_name": player_name or "",
         "player_username": player_username or "",
+        "player_photo_url": player_photo_url or "",
         "weapon_id": weapon_id or "",
         "pet_id": pet_id or "",
         "skin_id": skin_id or "",
@@ -827,6 +837,10 @@ def _effective_max_energy(state):
     return min(100, int(state["max_energy"]) + int(bonus["total_energy_bonus"]))
 
 
+def _xp_target_for_level(level):
+    return 30 + (int(level) * 12)
+
+
 def _decorate_game_state(state):
     if not state:
         return state
@@ -854,9 +868,9 @@ def _decorate_game_state(state):
         "pet_bonus": bonus["pet_tap_bonus"],
         "skin_bonus": bonus["skin_tap_bonus"],
     }
-    level_cost = max(50, int(state["level"]) * 50)
+    level_cost = _xp_target_for_level(state["level"])
     state["level_progress"] = {
-        "current": min(int(state["coins"]), level_cost),
+        "current": min(int(state.get("player_xp", 0)), level_cost),
         "target": level_cost,
     }
     state["equipment"] = equipment
@@ -959,43 +973,53 @@ def game_tap(chat_id, tap_count=1):
     # Keep economy stable: coins mostly from damage with a clear kill bonus.
     gained = max(1, int(damage * 0.45)) + bonus_coins
     new_energy = max(0, current_energy - real_tap_count)
+    xp_gain = max(1, real_tap_count + (1 if defeated else 0))
+    current_level = int(state["level"])
+    current_tap_power = int(state["tap_power"])
+    current_max_energy = int(state["max_energy"])
+    current_xp = int(state.get("player_xp", 0)) + xp_gain
+    level_up_count = 0
+    while True:
+        target_xp = _xp_target_for_level(current_level)
+        if current_xp < target_xp:
+            break
+        current_xp -= target_xp
+        current_level += 1
+        level_up_count += 1
+        current_tap_power += 1
+        current_max_energy = min(100, current_max_energy + 2)
+
     new_coins = state["coins"] + gained
     with get_db_connection() as conn:
         conn.execute(
             """
             UPDATE telegram_game_state
-            SET coins = ?, energy = ?, enemy_level = ?, enemy_hp = ?, enemy_max_hp = ?, updated_at = ?
+            SET coins = ?, energy = ?, enemy_level = ?, enemy_hp = ?, enemy_max_hp = ?, level = ?, tap_power = ?, max_energy = ?, player_xp = ?, updated_at = ?
             WHERE chat_id = ?
             """,
-            (new_coins, new_energy, enemy_level, new_enemy_hp, enemy_max_hp, now, str(chat_id)),
+            (
+                new_coins,
+                new_energy,
+                enemy_level,
+                new_enemy_hp,
+                enemy_max_hp,
+                current_level,
+                current_tap_power,
+                current_max_energy,
+                current_xp,
+                now,
+                str(chat_id),
+            ),
         )
     updated = _load_game_state(chat_id)
-    return True, updated, gained, damage, defeated, enemy_level_up
+    return True, updated, gained, damage, defeated, enemy_level_up, level_up_count
 
 
 def game_upgrade(chat_id):
     state = _load_game_state(chat_id)
     if not state:
         return False, None, 0
-    cost = state["level"] * 50
-    if state["coins"] < cost:
-        return False, state, cost
-
-    new_level = state["level"] + 1
-    new_tap_power = state["tap_power"] + 1
-    new_max_energy = min(100, state["max_energy"] + 2)
-    new_coins = state["coins"] - cost
-    new_energy = min(state["energy"], new_max_energy)
-    with get_db_connection() as conn:
-        conn.execute(
-            """
-            UPDATE telegram_game_state
-            SET coins = ?, energy = ?, max_energy = ?, tap_power = ?, level = ?
-            WHERE chat_id = ?
-            """,
-            (new_coins, new_energy, new_max_energy, new_tap_power, new_level, str(chat_id)),
-        )
-    return True, _load_game_state(chat_id), cost
+    return False, state, 0
 
 
 def game_buy_item(chat_id, item_id):
@@ -1510,6 +1534,7 @@ def api_game_tap():
             "damage": 0,
             "enemy_defeated": False,
             "enemy_level_up": False,
+            "player_level_up": 0,
         }), 200
 
     try:
@@ -1517,7 +1542,7 @@ def api_game_tap():
     except (TypeError, ValueError):
         return jsonify({"error": "tap_count harus angka."}), 400
 
-    ok, state, gained, damage, enemy_defeated, enemy_level_up = game_tap(chat_id, tap_count=tap_count)
+    ok, state, gained, damage, enemy_defeated, enemy_level_up, player_level_up = game_tap(chat_id, tap_count=tap_count)
     if not state:
         return jsonify({"error": "Gagal memuat state game."}), 500
     return jsonify({
@@ -1527,6 +1552,7 @@ def api_game_tap():
         "damage": int(damage),
         "enemy_defeated": bool(enemy_defeated),
         "enemy_level_up": bool(enemy_level_up),
+        "player_level_up": int(player_level_up),
         "state": _decorate_game_state(state),
     }), 200
 
