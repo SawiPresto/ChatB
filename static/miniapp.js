@@ -140,6 +140,14 @@
         return state.config.character_burst_attack_asset || "/static/game-assets/characters/sawipresto-burst-attack.png";
     }
 
+    function preloadAttackAssets() {
+        [getBasicAttackAsset(), getBurstAttackAsset()].forEach((src) => {
+            if (!src) return;
+            const img = new Image();
+            img.src = src;
+        });
+    }
+
     function applyAttackPose(poseAsset, durationMs, poseClassName) {
         if (state.poseResetTimer) {
             clearTimeout(state.poseResetTimer);
@@ -147,27 +155,31 @@
         }
         const poseId = ++state.poseSessionId;
         els.playerFighter.classList.remove("pose-basic", "pose-burst");
+        els.playerFighter.classList.remove("pose-attack-ready");
         if (poseClassName) {
             els.playerFighter.classList.add(poseClassName);
         }
         const attackNode = els.charAttackImg;
         if (attackNode && poseAsset) {
+            els.playerFighter.classList.add("pose-active");
             attackNode.onload = function () {
                 if (poseId !== state.poseSessionId) return;
-                els.playerFighter.classList.add("pose-active");
+                els.playerFighter.classList.add("pose-attack-ready");
             };
             attackNode.onerror = function () {
                 if (poseId !== state.poseSessionId) return;
                 els.playerFighter.classList.remove("pose-active");
+                els.playerFighter.classList.remove("pose-attack-ready");
                 attackNode.style.display = "none";
             };
             attackNode.src = poseAsset;
             attackNode.style.display = "block";
             if (attackNode.complete && attackNode.naturalWidth > 0) {
-                els.playerFighter.classList.add("pose-active");
+                els.playerFighter.classList.add("pose-attack-ready");
             }
         } else {
             els.playerFighter.classList.remove("pose-active");
+            els.playerFighter.classList.remove("pose-attack-ready");
         }
         state.poseResetTimer = setTimeout(() => {
             if (poseId !== state.poseSessionId) return;
@@ -178,6 +190,7 @@
             }
             els.playerFighter.classList.remove("pose-basic", "pose-burst");
             els.playerFighter.classList.remove("pose-active");
+            els.playerFighter.classList.remove("pose-attack-ready");
         }, durationMs);
     }
 
@@ -438,6 +451,7 @@
             state.catalog = Array.isArray(auth.catalog) ? auth.catalog : [];
             state.config = auth.config || {};
 
+            preloadAttackAssets();
             applySceneConfig();
             applyState(auth.state);
             renderShop();

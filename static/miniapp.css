@@ -261,7 +261,7 @@ body {
     z-index: 5;
 }
 
-.fighter.player.pose-active #char-base-img {
+.fighter.player.pose-attack-ready #char-base-img {
     opacity: 0;
 }
 
@@ -269,9 +269,9 @@ body {
     display: block;
 }
 
-.fighter.player.pose-active #char-skin-img,
-.fighter.player.pose-active #char-weapon-img,
-.fighter.player.pose-active #char-pet-img {
+.fighter.player.pose-attack-ready #char-skin-img,
+.fighter.player.pose-attack-ready #char-weapon-img,
+.fighter.player.pose-attack-ready #char-pet-img {
     opacity: 0;
     transition: opacity 80ms ease;
 }
