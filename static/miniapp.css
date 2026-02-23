@@ -350,6 +350,9 @@ body {
     font-weight: 700;
     font-size: 0.84rem;
     padding: 12px 10px;
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
 }
 
 .skill.main {
@@ -362,6 +365,25 @@ body {
     border-color: #f59e0b;
     background: linear-gradient(180deg, #f59e0b, #ea580c);
     color: #fff7ed;
+}
+
+.skill.burst::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: var(--cooldown-progress, 100%);
+    background: linear-gradient(90deg, #f59e0b, #fb923c);
+    opacity: 0.95;
+    z-index: -1;
+    transition: width 160ms linear;
+}
+
+.skill.burst.cooldown {
+    border-color: #3f61a5;
+    background: rgba(14, 28, 56, 0.92);
+    color: #e8eefc;
 }
 
 .skill.ghost {

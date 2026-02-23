@@ -45,7 +45,7 @@ GAME_DEFAULT_MAX_ENERGY = min(100, max(5, int(os.getenv("GAME_DEFAULT_MAX_ENERGY
 GAME_DEFAULT_TAP_POWER = max(1, int(os.getenv("GAME_DEFAULT_TAP_POWER", "1")))
 GAME_TAP_COOLDOWN_SECONDS = float(os.getenv("GAME_TAP_COOLDOWN_SECONDS", "0.35"))
 GAME_MAX_TAP_BATCH = max(1, int(os.getenv("GAME_MAX_TAP_BATCH", "10")))
-GAME_BURST_ENERGY_COST = max(1, int(os.getenv("GAME_BURST_ENERGY_COST", "12")))
+GAME_BURST_ENERGY_COST = max(1, int(os.getenv("GAME_BURST_ENERGY_COST", "2")))
 GAME_BURST_COOLDOWN_SECONDS = max(3, int(os.getenv("GAME_BURST_COOLDOWN_SECONDS", "10")))
 MINIAPP_SESSION_TTL_SECONDS = max(300, int(os.getenv("MINIAPP_SESSION_TTL_SECONDS", "86400")))
 MINIAPP_SIGNING_SECRET = os.getenv("MINIAPP_SIGNING_SECRET", "").strip()
@@ -973,8 +973,21 @@ def game_tap(chat_id, tap_count=1, damage_multiplier=1.0, as_skill=False):
     if current_energy < required_energy:
         return False, state, 0, 0, False, False, 0, False
 
-    base_damage = _effective_tap_power(state) * real_tap_count * float(damage_multiplier)
-    crit_chance = _decorate_game_state(dict(state))["combat_profile"]["crit_chance"]
+    decorated = _decorate_game_state(dict(state))
+    crit_chance = decorated["combat_profile"]["crit_chance"]
+    if as_skill:
+        # Burst design: fixed low energy cost with level-based spike damage.
+        # Base 8, then grows by (level * 2 * 4) and boosted slightly by equipped items.
+        level = int(state.get("level", 1))
+        profile = decorated.get("combat_profile", {})
+        equipment_boost = (
+            int(profile.get("weapon_bonus", 0)) * 2
+            + int(profile.get("pet_bonus", 0))
+            + int(profile.get("skin_bonus", 0))
+        )
+        base_damage = 8 + (level * 2 * 4) + equipment_boost
+    else:
+        base_damage = _effective_tap_power(state) * real_tap_count * float(damage_multiplier)
     is_critical = random.random() < float(crit_chance)
     damage = int(base_damage * (1.75 if is_critical else 1.0))
     damage = max(1, damage)
@@ -1048,7 +1061,7 @@ def game_tap(chat_id, tap_count=1, damage_multiplier=1.0, as_skill=False):
 
 
 def game_burst_skill(chat_id):
-    return game_tap(chat_id, tap_count=4, damage_multiplier=1.65, as_skill=True)
+    return game_tap(chat_id, tap_count=1, damage_multiplier=1.0, as_skill=True)
 
 
 def game_upgrade(chat_id):

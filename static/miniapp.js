@@ -5,6 +5,8 @@
         game: null,
         catalog: [],
         config: {},
+        burstCooldownRemaining: 0,
+        burstCooldownAnchorMs: 0,
     };
 
     const els = {
@@ -53,6 +55,28 @@
 
     function setStatus(text) {
         els.status.textContent = text || "";
+    }
+
+    function getBurstRemainingSeconds() {
+        const anchor = Number(state.burstCooldownAnchorMs || 0);
+        if (!anchor) return 0;
+        const elapsed = Math.max(0, (performance.now() - anchor) / 1000);
+        return Math.max(0, Number(state.burstCooldownRemaining || 0) - elapsed);
+    }
+
+    function updateBurstCooldownUI() {
+        if (!els.burstBtn) return;
+        const total = Math.max(1, Number(state.config.burst_cooldown_seconds || 10));
+        const remaining = getBurstRemainingSeconds();
+        const progress = Math.max(0, Math.min(100, ((total - remaining) / total) * 100));
+        els.burstBtn.style.setProperty("--cooldown-progress", `${progress}%`);
+        if (remaining > 0.05) {
+            els.burstBtn.classList.add("cooldown");
+            els.burstBtn.textContent = `Burst ${remaining.toFixed(1)}s`;
+        } else {
+            els.burstBtn.classList.remove("cooldown");
+            els.burstBtn.textContent = "Burst";
+        }
     }
 
     function getEquipmentName(equipment) {
@@ -175,6 +199,10 @@
         const progressTarget = Math.max(1, Number(progress.target || 1));
         const progressPct = Math.max(0, Math.min(100, (progressCurrent / progressTarget) * 100));
         els.levelProgressBar.style.width = `${progressPct}%`;
+        const combat = gameState.combat_profile || {};
+        state.burstCooldownRemaining = Number(combat.burst_cooldown_remaining || 0);
+        state.burstCooldownAnchorMs = performance.now();
+        updateBurstCooldownUI();
 
         const enemy = gameState.enemy || {};
         const enemyHp = Number(enemy.hp || 0);
@@ -389,6 +417,11 @@
     });
     els.closeInventory.addEventListener("click", () => togglePanel(els.inventoryPanel, false));
     els.closeLeaderboard.addEventListener("click", () => togglePanel(els.leaderboardPanel, false));
+
+    setInterval(() => {
+        if (!state.token) return;
+        updateBurstCooldownUI();
+    }, 120);
 
     setInterval(() => {
         if (!state.token) return;
