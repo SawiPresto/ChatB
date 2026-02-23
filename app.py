@@ -5,6 +5,7 @@ import re
 import html
 import hmac
 import hashlib
+import random
 import sqlite3
 import time
 from collections import defaultdict, deque
@@ -44,6 +45,8 @@ GAME_DEFAULT_MAX_ENERGY = min(100, max(5, int(os.getenv("GAME_DEFAULT_MAX_ENERGY
 GAME_DEFAULT_TAP_POWER = max(1, int(os.getenv("GAME_DEFAULT_TAP_POWER", "1")))
 GAME_TAP_COOLDOWN_SECONDS = float(os.getenv("GAME_TAP_COOLDOWN_SECONDS", "0.35"))
 GAME_MAX_TAP_BATCH = max(1, int(os.getenv("GAME_MAX_TAP_BATCH", "10")))
+GAME_BURST_ENERGY_COST = max(1, int(os.getenv("GAME_BURST_ENERGY_COST", "12")))
+GAME_BURST_COOLDOWN_SECONDS = max(3, int(os.getenv("GAME_BURST_COOLDOWN_SECONDS", "10")))
 MINIAPP_SESSION_TTL_SECONDS = max(300, int(os.getenv("MINIAPP_SESSION_TTL_SECONDS", "86400")))
 MINIAPP_SIGNING_SECRET = os.getenv("MINIAPP_SIGNING_SECRET", "").strip()
 GAME_CHARACTER_BASE_ASSET = os.getenv(
@@ -212,6 +215,7 @@ def init_memory_store():
                 player_name TEXT NOT NULL DEFAULT '',
                 player_username TEXT NOT NULL DEFAULT '',
                 player_photo_url TEXT NOT NULL DEFAULT '',
+                last_skill_at REAL NOT NULL DEFAULT 0,
                 updated_at REAL NOT NULL,
                 weapon_id TEXT NOT NULL DEFAULT '',
                 pet_id TEXT NOT NULL DEFAULT '',
@@ -264,6 +268,7 @@ ensure_column_exists("telegram_game_state", "player_xp", "player_xp INTEGER NOT 
 ensure_column_exists("telegram_game_state", "player_name", "player_name TEXT NOT NULL DEFAULT ''")
 ensure_column_exists("telegram_game_state", "player_username", "player_username TEXT NOT NULL DEFAULT ''")
 ensure_column_exists("telegram_game_state", "player_photo_url", "player_photo_url TEXT NOT NULL DEFAULT ''")
+ensure_column_exists("telegram_game_state", "last_skill_at", "last_skill_at REAL NOT NULL DEFAULT 0")
 
 
 def get_telegram_token():
@@ -660,9 +665,9 @@ def _ensure_game_state(chat_id):
             INSERT INTO telegram_game_state(
                 chat_id, coins, energy, max_energy, tap_power, level, updated_at,
                 weapon_id, pet_id, skin_id, owned_items, enemy_level, enemy_hp, enemy_max_hp,
-                player_xp, player_name, player_username, player_photo_url
+                player_xp, player_name, player_username, player_photo_url, last_skill_at
             )
-            VALUES (?, 0, ?, ?, ?, 1, ?, '', '', '', '[]', ?, ?, ?, 0, '', '', '')
+            VALUES (?, 0, ?, ?, ?, 1, ?, '', '', '', '[]', ?, ?, ?, 0, '', '', '', 0)
             ON CONFLICT(chat_id) DO NOTHING
             """,
             (
@@ -688,7 +693,7 @@ def _load_game_state(chat_id):
             SELECT
                 coins, energy, max_energy, tap_power, level,
                 enemy_level, enemy_hp, enemy_max_hp,
-                updated_at, weapon_id, pet_id, skin_id, owned_items, player_xp, player_name, player_username, player_photo_url
+                updated_at, weapon_id, pet_id, skin_id, owned_items, player_xp, player_name, player_username, player_photo_url, last_skill_at
             FROM telegram_game_state
             WHERE chat_id = ?
             """,
@@ -715,6 +720,7 @@ def _load_game_state(chat_id):
             player_name,
             player_username,
             player_photo_url,
+            last_skill_at,
         ) = row
         enemy = _enemy_spec(enemy_level)
         if int(enemy_max_hp) <= 0 or int(enemy_max_hp) != int(enemy["hp"]):
@@ -766,6 +772,7 @@ def _load_game_state(chat_id):
         "player_name": player_name or "",
         "player_username": player_username or "",
         "player_photo_url": player_photo_url or "",
+        "last_skill_at": float(last_skill_at or 0),
         "weapon_id": weapon_id or "",
         "pet_id": pet_id or "",
         "skin_id": skin_id or "",
@@ -868,6 +875,13 @@ def _decorate_game_state(state):
         "pet_bonus": bonus["pet_tap_bonus"],
         "skin_bonus": bonus["skin_tap_bonus"],
     }
+    crit_chance = 0.12 + min(0.18, (bonus["weapon_tap_bonus"] * 0.008) + (bonus["pet_tap_bonus"] * 0.006))
+    state["combat_profile"]["crit_chance"] = round(crit_chance, 3)
+    skill_elapsed = max(0.0, time.time() - float(state.get("last_skill_at", 0)))
+    state["combat_profile"]["burst_cooldown_remaining"] = max(
+        0.0, float(GAME_BURST_COOLDOWN_SECONDS) - skill_elapsed
+    )
+    state["combat_profile"]["burst_energy_cost"] = int(GAME_BURST_ENERGY_COST)
     level_cost = _xp_target_for_level(state["level"])
     state["level_progress"] = {
         "current": min(int(state.get("player_xp", 0)), level_cost),
@@ -931,23 +945,39 @@ def is_game_idempotency_replayed(chat_id, request_key):
     return False
 
 
-def game_tap(chat_id, tap_count=1):
+def game_tap(chat_id, tap_count=1, damage_multiplier=1.0, as_skill=False):
     state = _load_game_state(chat_id)
     if not state:
-        return False, None, 0, 0, False, False
+        return False, None, 0, 0, False, False, 0, False
     tap_count = max(1, min(int(tap_count), GAME_MAX_TAP_BATCH))
 
     now = time.time()
-    if (now - state["updated_at"]) < GAME_TAP_COOLDOWN_SECONDS:
-        return False, state, 0, 0, False, False
+    if (now - state["updated_at"]) < GAME_TAP_COOLDOWN_SECONDS and not as_skill:
+        return False, state, 0, 0, False, False, 0, False
+
+    if as_skill:
+        last_skill_at = float(state.get("last_skill_at", 0))
+        if (now - last_skill_at) < GAME_BURST_COOLDOWN_SECONDS:
+            return False, state, 0, 0, False, False, 0, False
 
     effective_max_energy = _effective_max_energy(state)
     current_energy = min(state["energy"], effective_max_energy)
     if current_energy <= 0:
-        return False, state, 0, 0, False, False
+        return False, state, 0, 0, False, False, 0, False
 
+    if as_skill and current_energy < GAME_BURST_ENERGY_COST:
+        return False, state, 0, 0, False, False, 0, False
+
+    required_energy = GAME_BURST_ENERGY_COST if as_skill else 1
     real_tap_count = min(tap_count, current_energy)
-    damage = _effective_tap_power(state) * real_tap_count
+    if current_energy < required_energy:
+        return False, state, 0, 0, False, False, 0, False
+
+    base_damage = _effective_tap_power(state) * real_tap_count * float(damage_multiplier)
+    crit_chance = _decorate_game_state(dict(state))["combat_profile"]["crit_chance"]
+    is_critical = random.random() < float(crit_chance)
+    damage = int(base_damage * (1.75 if is_critical else 1.0))
+    damage = max(1, damage)
     current_enemy_hp = int(state.get("enemy_hp", 0))
     enemy_level = int(state.get("enemy_level", 1))
     enemy_spec = _enemy_spec(enemy_level)
@@ -972,8 +1002,9 @@ def game_tap(chat_id, tap_count=1):
 
     # Keep economy stable: coins mostly from damage with a clear kill bonus.
     gained = max(1, int(damage * 0.45)) + bonus_coins
-    new_energy = max(0, current_energy - real_tap_count)
-    xp_gain = max(1, real_tap_count + (1 if defeated else 0))
+    energy_cost = max(required_energy, real_tap_count if not as_skill else required_energy)
+    new_energy = max(0, current_energy - energy_cost)
+    xp_gain = max(1, real_tap_count + (1 if defeated else 0) + (1 if as_skill else 0))
     current_level = int(state["level"])
     current_tap_power = int(state["tap_power"])
     current_max_energy = int(state["max_energy"])
@@ -994,7 +1025,7 @@ def game_tap(chat_id, tap_count=1):
         conn.execute(
             """
             UPDATE telegram_game_state
-            SET coins = ?, energy = ?, enemy_level = ?, enemy_hp = ?, enemy_max_hp = ?, level = ?, tap_power = ?, max_energy = ?, player_xp = ?, updated_at = ?
+            SET coins = ?, energy = ?, enemy_level = ?, enemy_hp = ?, enemy_max_hp = ?, level = ?, tap_power = ?, max_energy = ?, player_xp = ?, last_skill_at = ?, updated_at = ?
             WHERE chat_id = ?
             """,
             (
@@ -1007,12 +1038,17 @@ def game_tap(chat_id, tap_count=1):
                 current_tap_power,
                 current_max_energy,
                 current_xp,
+                (now if as_skill else float(state.get("last_skill_at", 0))),
                 now,
                 str(chat_id),
             ),
         )
     updated = _load_game_state(chat_id)
-    return True, updated, gained, damage, defeated, enemy_level_up, level_up_count
+    return True, updated, gained, damage, defeated, enemy_level_up, level_up_count, is_critical
+
+
+def game_burst_skill(chat_id):
+    return game_tap(chat_id, tap_count=4, damage_multiplier=1.65, as_skill=True)
 
 
 def game_upgrade(chat_id):
@@ -1510,6 +1546,8 @@ def api_game_auth():
             "tap_cooldown_seconds": GAME_TAP_COOLDOWN_SECONDS,
             "max_tap_batch": GAME_MAX_TAP_BATCH,
             "energy_regen_seconds": GAME_ENERGY_REGEN_SECONDS,
+            "burst_energy_cost": GAME_BURST_ENERGY_COST,
+            "burst_cooldown_seconds": GAME_BURST_COOLDOWN_SECONDS,
             "character_base_asset": GAME_CHARACTER_BASE_ASSET,
             "battle_bg_asset": GAME_BATTLE_BG_ASSET,
             "enemy_base_asset": GAME_ENEMY_BASE_ASSET,
@@ -1550,6 +1588,7 @@ def api_game_tap():
             "state": _decorate_game_state(_load_game_state(chat_id)),
             "gained": 0,
             "damage": 0,
+            "is_critical": False,
             "enemy_defeated": False,
             "enemy_level_up": False,
             "player_level_up": 0,
@@ -1560,7 +1599,7 @@ def api_game_tap():
     except (TypeError, ValueError):
         return jsonify({"error": "tap_count harus angka."}), 400
 
-    ok, state, gained, damage, enemy_defeated, enemy_level_up, player_level_up = game_tap(chat_id, tap_count=tap_count)
+    ok, state, gained, damage, enemy_defeated, enemy_level_up, player_level_up, is_critical = game_tap(chat_id, tap_count=tap_count)
     if not state:
         return jsonify({"error": "Gagal memuat state game."}), 500
     return jsonify({
@@ -1568,6 +1607,40 @@ def api_game_tap():
         "tapped": bool(ok),
         "gained": int(gained),
         "damage": int(damage),
+        "is_critical": bool(is_critical),
+        "enemy_defeated": bool(enemy_defeated),
+        "enemy_level_up": bool(enemy_level_up),
+        "player_level_up": int(player_level_up),
+        "state": _decorate_game_state(state),
+    }), 200
+
+
+@app.route('/api/game/skill/burst', methods=['POST'])
+def api_game_skill_burst():
+    chat_id, error = _require_game_session()
+    if error:
+        return error
+    request_key = request.headers.get("X-Idempotency-Key", "")
+    if request_key and is_game_idempotency_replayed(chat_id, request_key):
+        return jsonify({
+            "ok": True,
+            "replayed": True,
+            "state": _decorate_game_state(_load_game_state(chat_id)),
+            "used": False,
+            "gained": 0,
+            "damage": 0,
+            "is_critical": False,
+        }), 200
+
+    ok, state, gained, damage, enemy_defeated, enemy_level_up, player_level_up, is_critical = game_burst_skill(chat_id)
+    if not state:
+        return jsonify({"error": "Gagal memuat state game."}), 500
+    return jsonify({
+        "ok": True,
+        "used": bool(ok),
+        "gained": int(gained),
+        "damage": int(damage),
+        "is_critical": bool(is_critical),
         "enemy_defeated": bool(enemy_defeated),
         "enemy_level_up": bool(enemy_level_up),
         "player_level_up": int(player_level_up),

@@ -38,7 +38,7 @@
         hitFx: document.getElementById("hit-fx"),
         damageLayer: document.getElementById("damage-layer"),
         tapBtn: document.getElementById("tap-btn"),
-        upgradeBtn: document.getElementById("upgrade-btn"),
+        burstBtn: document.getElementById("burst-btn"),
         inventoryBtn: document.getElementById("inventory-btn"),
         leaderboardBtn: document.getElementById("leaderboard-btn"),
         refreshBtn: document.getElementById("refresh-btn"),
@@ -115,6 +115,23 @@
             els.slashFx.classList.remove("active");
             els.hitFx.classList.remove("active");
         }, 260);
+    }
+
+    function triggerBurstFx(damage) {
+        els.playerFighter.classList.add("bursting");
+        els.enemyFighter.classList.add("burst-hit");
+        els.slashFx.classList.add("active");
+        els.hitFx.classList.add("active");
+        if (damage > 0) {
+            spawnDamage(damage);
+            setTimeout(() => spawnDamage(Math.max(1, Math.floor(damage * 0.4))), 90);
+        }
+        setTimeout(() => {
+            els.playerFighter.classList.remove("bursting");
+            els.enemyFighter.classList.remove("burst-hit");
+            els.slashFx.classList.remove("active");
+            els.hitFx.classList.remove("active");
+        }, 330);
     }
 
     function applyCharacterArt(gameState) {
@@ -273,7 +290,8 @@
                         : " Boss terakhir respawn lagi.";
                     setStatus(`Enemy down! +${data.gained} coin.${levelInfo}`);
                 } else {
-                    setStatus(`Critical slash! ${data.damage} dmg, +${data.gained} coin`);
+                    const critTag = data.is_critical ? " CRITICAL!" : "";
+                    setStatus(`Slash! ${data.damage} dmg${critTag} +${data.gained} coin`);
                 }
                 if (Number(data.player_level_up || 0) > 0) {
                     setStatus(`Level Up +${data.player_level_up}! ${els.playerName.textContent} makin kuat.`);
@@ -290,8 +308,32 @@
         }
     }
 
-    async function handleUpgrade() {
-        setStatus("Level naik otomatis saat progress bar penuh.");
+    async function handleBurst() {
+        els.burstBtn.disabled = true;
+        try {
+            const data = await api("/api/game/skill/burst", "POST", {}, true);
+            applyState(data.state);
+            renderShop();
+            if (data.used) {
+                triggerBurstFx(data.damage || data.gained);
+                const critTag = data.is_critical ? " CRITICAL!" : "";
+                setStatus(`Burst aktif! ${data.damage} dmg${critTag} +${data.gained} coin`);
+            } else {
+                const c = (data.state && data.state.combat_profile) || {};
+                const remain = Number(c.burst_cooldown_remaining || 0);
+                if (remain > 0.1) {
+                    setStatus(`Burst cooldown ${remain.toFixed(1)}s`);
+                } else {
+                    setStatus(`Energy kurang untuk Burst (butuh ${c.burst_energy_cost || 0}).`);
+                }
+            }
+        } catch (err) {
+            setStatus(err.message);
+        } finally {
+            setTimeout(() => {
+                els.burstBtn.disabled = false;
+            }, 250);
+        }
     }
 
     async function bootstrap() {
@@ -321,7 +363,7 @@
     }
 
     els.tapBtn.addEventListener("click", handleTap);
-    els.upgradeBtn.addEventListener("click", handleUpgrade);
+    els.burstBtn.addEventListener("click", handleBurst);
     els.refreshBtn.addEventListener("click", async () => {
         try {
             await refreshState();

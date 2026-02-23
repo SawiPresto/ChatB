@@ -222,12 +222,12 @@ body {
 
 .fighter.player {
     justify-self: start;
-    width: 200px;
+    width: 188px;
 }
 
 .fighter.enemy {
     justify-self: end;
-    width: 200px;
+    width: 236px;
 }
 
 .fighter-layer {
@@ -250,8 +250,20 @@ body {
     animation: weapon-swing 220ms ease;
 }
 
+.fighter.player.attacking {
+    animation: player-dash 240ms ease;
+}
+
+.fighter.player.bursting {
+    animation: player-burst-dash 300ms ease;
+}
+
 .fighter.hit {
     animation: enemy-hit 220ms ease;
+}
+
+.fighter.enemy.burst-hit {
+    animation: enemy-burst-hit 300ms ease;
 }
 
 .fallback-hero,
@@ -325,7 +337,7 @@ body {
     z-index: 3;
     padding: 10px 12px 12px;
     display: grid;
-    grid-template-columns: 1.2fr repeat(4, 1fr);
+    grid-template-columns: 1.3fr repeat(4, 1fr);
     gap: 8px;
     background: linear-gradient(180deg, rgba(9, 18, 40, 0), rgba(9, 18, 40, 0.84) 35%);
 }
@@ -344,6 +356,12 @@ body {
     border-color: #16a34a;
     background: linear-gradient(180deg, var(--accent), var(--accent-2));
     color: #f3fff5;
+}
+
+.skill.burst {
+    border-color: #f59e0b;
+    background: linear-gradient(180deg, #f59e0b, #ea580c);
+    color: #fff7ed;
 }
 
 .skill.ghost {
@@ -499,8 +517,26 @@ body {
 
 @keyframes enemy-hit {
     0% { transform: translateX(0) scale(1); }
-    40% { transform: translateX(9px) scale(0.98); }
+    30% { transform: translateX(14px) scale(0.97); filter: brightness(1.15); }
     100% { transform: translateX(0) scale(1); }
+}
+
+@keyframes player-dash {
+    0% { transform: translateX(0); }
+    35% { transform: translateX(16px); }
+    100% { transform: translateX(0); }
+}
+
+@keyframes player-burst-dash {
+    0% { transform: translateX(0) scale(1); }
+    35% { transform: translateX(26px) scale(1.06); }
+    100% { transform: translateX(0) scale(1); }
+}
+
+@keyframes enemy-burst-hit {
+    0% { transform: translateX(0) scale(1); filter: brightness(1); }
+    30% { transform: translateX(22px) scale(0.94); filter: brightness(1.35); }
+    100% { transform: translateX(0) scale(1); filter: brightness(1); }
 }
 
 @media (max-width: 760px) {
@@ -509,19 +545,19 @@ body {
     }
 
     .fighter.player {
-        width: 150px;
+        width: 138px;
     }
 
     .fighter.enemy {
-        width: 150px;
+        width: 174px;
     }
 
     .skill-bar {
         grid-template-columns: 1fr 1fr 1fr;
         grid-template-areas:
             "tap tap tap"
-            "upgrade inventory leaderboard"
-            "refresh refresh refresh";
+            "burst inventory leaderboard"
+            "sync sync sync";
         padding-top: 8px;
     }
 
@@ -537,8 +573,8 @@ body {
     }
 
     #tap-btn { grid-area: tap; }
-    #upgrade-btn { grid-area: upgrade; }
+    #burst-btn { grid-area: burst; }
     #inventory-btn { grid-area: inventory; }
     #leaderboard-btn { grid-area: leaderboard; }
-    #refresh-btn { grid-area: refresh; }
+    #refresh-btn { grid-area: sync; }
 }
