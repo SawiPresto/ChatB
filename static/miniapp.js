@@ -149,6 +149,21 @@
     }
 
     function applyAttackPose(poseAsset, durationMs, poseClassName) {
+        function schedulePoseReset(poseId, ms) {
+            state.poseResetTimer = setTimeout(() => {
+                if (poseId !== state.poseSessionId) return;
+                const attackNode = els.charAttackImg;
+                if (attackNode) {
+                    attackNode.onload = null;
+                    attackNode.onerror = null;
+                    attackNode.style.display = "none";
+                }
+                els.playerFighter.classList.remove("pose-basic", "pose-burst");
+                els.playerFighter.classList.remove("pose-active");
+                els.playerFighter.classList.remove("pose-attack-ready");
+            }, ms);
+        }
+
         if (state.poseResetTimer) {
             clearTimeout(state.poseResetTimer);
             state.poseResetTimer = null;
@@ -162,9 +177,27 @@
         const attackNode = els.charAttackImg;
         if (attackNode && poseAsset) {
             els.playerFighter.classList.add("pose-active");
+            const currentSrc = attackNode.getAttribute("src") || "";
+            const isSameAsset = currentSrc === poseAsset;
+            const isReady = isSameAsset && attackNode.complete && attackNode.naturalWidth > 0;
+            let resetScheduled = false;
+            if (currentSrc !== poseAsset) {
+                attackNode.src = poseAsset;
+            }
+            attackNode.style.display = "block";
+
+            if (isReady) {
+                els.playerFighter.classList.add("pose-attack-ready");
+                schedulePoseReset(poseId, durationMs);
+                return;
+            }
+
             attackNode.onload = function () {
                 if (poseId !== state.poseSessionId) return;
+                if (resetScheduled) return;
+                resetScheduled = true;
                 els.playerFighter.classList.add("pose-attack-ready");
+                schedulePoseReset(poseId, durationMs);
             };
             attackNode.onerror = function () {
                 if (poseId !== state.poseSessionId) return;
@@ -172,30 +205,17 @@
                 els.playerFighter.classList.remove("pose-attack-ready");
                 attackNode.style.display = "none";
             };
-            const currentSrc = attackNode.getAttribute("src") || "";
-            if (currentSrc !== poseAsset) {
-                attackNode.src = poseAsset;
-            }
-            attackNode.style.display = "block";
             if (attackNode.complete && attackNode.naturalWidth > 0) {
+                if (resetScheduled) return;
+                resetScheduled = true;
                 els.playerFighter.classList.add("pose-attack-ready");
+                schedulePoseReset(poseId, durationMs);
             }
         } else {
             els.playerFighter.classList.remove("pose-active");
             els.playerFighter.classList.remove("pose-attack-ready");
+            schedulePoseReset(poseId, durationMs);
         }
-        state.poseResetTimer = setTimeout(() => {
-            if (poseId !== state.poseSessionId) return;
-            if (attackNode) {
-                attackNode.onload = null;
-                attackNode.onerror = null;
-                attackNode.removeAttribute("src");
-                attackNode.style.display = "none";
-            }
-            els.playerFighter.classList.remove("pose-basic", "pose-burst");
-            els.playerFighter.classList.remove("pose-active");
-            els.playerFighter.classList.remove("pose-attack-ready");
-        }, durationMs);
     }
 
     function triggerAttackFx(damage) {
