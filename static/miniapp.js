@@ -144,24 +144,22 @@
             state.poseResetTimer = null;
         }
         els.playerFighter.classList.remove("pose-basic", "pose-burst");
+        els.playerFighter.classList.add("pose-active");
         if (poseAsset) {
             els.charBaseImg.classList.add("pose-switching");
-            setTimeout(() => {
-                setImg(els.charBaseImg, poseAsset, els.charFallback);
-                requestAnimationFrame(() => {
-                    els.charBaseImg.classList.remove("pose-switching");
-                });
-            }, 70);
+            setImg(els.charBaseImg, poseAsset, els.charFallback);
+            requestAnimationFrame(() => {
+                els.charBaseImg.classList.remove("pose-switching");
+            });
         }
         state.poseResetTimer = setTimeout(() => {
             els.charBaseImg.classList.add("pose-switching");
-            setTimeout(() => {
-                setImg(els.charBaseImg, getIdleBaseAsset(), els.charFallback);
-                requestAnimationFrame(() => {
-                    els.charBaseImg.classList.remove("pose-switching");
-                });
-            }, 70);
+            setImg(els.charBaseImg, getIdleBaseAsset(), els.charFallback);
+            requestAnimationFrame(() => {
+                els.charBaseImg.classList.remove("pose-switching");
+            });
             els.playerFighter.classList.remove("pose-basic", "pose-burst");
+            els.playerFighter.classList.remove("pose-active");
         }, durationMs);
     }
 

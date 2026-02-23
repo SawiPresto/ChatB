@@ -256,6 +256,13 @@ body {
     filter: saturate(1.2) brightness(1.06) drop-shadow(0 0 16px rgba(251, 146, 60, 0.55));
 }
 
+.fighter.player.pose-active #char-skin-img,
+.fighter.player.pose-active #char-weapon-img,
+.fighter.player.pose-active #char-pet-img {
+    opacity: 0;
+    transition: opacity 80ms ease;
+}
+
 .enemy-layer {
     transform: none;
 }
