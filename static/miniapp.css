@@ -238,6 +238,24 @@ body {
     object-fit: contain;
 }
 
+.player-base-layer {
+    transition: opacity 110ms ease, transform 150ms ease, filter 170ms ease;
+    will-change: transform, opacity, filter;
+}
+
+.player-base-layer.pose-switching {
+    opacity: 0.2;
+    transform: translateX(12px) scale(0.96);
+}
+
+.fighter.player.pose-basic .player-base-layer {
+    filter: saturate(1.08);
+}
+
+.fighter.player.pose-burst .player-base-layer {
+    filter: saturate(1.2) brightness(1.06) drop-shadow(0 0 16px rgba(251, 146, 60, 0.55));
+}
+
 .enemy-layer {
     transform: none;
 }
@@ -477,6 +495,7 @@ body {
     height: 58px;
     object-fit: contain;
     margin: 6px 0 2px;
+    transform: scaleX(-1);
 }
 
 .shop-meta {
