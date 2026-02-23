@@ -172,7 +172,10 @@
                 els.playerFighter.classList.remove("pose-attack-ready");
                 attackNode.style.display = "none";
             };
-            attackNode.src = poseAsset;
+            const currentSrc = attackNode.getAttribute("src") || "";
+            if (currentSrc !== poseAsset) {
+                attackNode.src = poseAsset;
+            }
             attackNode.style.display = "block";
             if (attackNode.complete && attackNode.naturalWidth > 0) {
                 els.playerFighter.classList.add("pose-attack-ready");
@@ -186,7 +189,8 @@
             if (attackNode) {
                 attackNode.onload = null;
                 attackNode.onerror = null;
-                setImg(attackNode, "", null);
+                attackNode.removeAttribute("src");
+                attackNode.style.display = "none";
             }
             els.playerFighter.classList.remove("pose-basic", "pose-burst");
             els.playerFighter.classList.remove("pose-active");
@@ -230,12 +234,16 @@
     }
 
     function applyCharacterArt(gameState) {
+        const isPoseRunning =
+            els.playerFighter.classList.contains("pose-active") ||
+            els.playerFighter.classList.contains("pose-attack-ready");
         const baseAsset = getIdleBaseAsset();
         const skinAsset = gameState && gameState.equipment && gameState.equipment.skin ? gameState.equipment.skin.asset : "";
         const weaponAsset = gameState && gameState.equipment && gameState.equipment.weapon ? gameState.equipment.weapon.asset : "";
         const petAsset = gameState && gameState.equipment && gameState.equipment.pet ? gameState.equipment.pet.asset : "";
-        setImg(els.charBaseImg, baseAsset, els.charFallback);
-        setImg(els.charAttackImg, "", null);
+        if (!isPoseRunning) {
+            setImg(els.charBaseImg, baseAsset, els.charFallback);
+        }
         setImg(els.charSkinImg, skinAsset);
         setImg(els.charWeaponImg, weaponAsset);
         setImg(els.charPetImg, petAsset);
