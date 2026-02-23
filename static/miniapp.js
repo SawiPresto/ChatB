@@ -8,6 +8,7 @@
         burstCooldownRemaining: 0,
         burstCooldownAnchorMs: 0,
         poseResetTimer: null,
+        poseSessionId: 0,
     };
 
     const els = {
@@ -144,14 +145,37 @@
             clearTimeout(state.poseResetTimer);
             state.poseResetTimer = null;
         }
+        const poseId = ++state.poseSessionId;
         els.playerFighter.classList.remove("pose-basic", "pose-burst");
         if (poseClassName) {
             els.playerFighter.classList.add(poseClassName);
         }
-        els.playerFighter.classList.add("pose-active");
-        setImg(els.charAttackImg, poseAsset, null);
+        const attackNode = els.charAttackImg;
+        if (attackNode && poseAsset) {
+            attackNode.onload = function () {
+                if (poseId !== state.poseSessionId) return;
+                els.playerFighter.classList.add("pose-active");
+            };
+            attackNode.onerror = function () {
+                if (poseId !== state.poseSessionId) return;
+                els.playerFighter.classList.remove("pose-active");
+                attackNode.style.display = "none";
+            };
+            attackNode.src = poseAsset;
+            attackNode.style.display = "block";
+            if (attackNode.complete && attackNode.naturalWidth > 0) {
+                els.playerFighter.classList.add("pose-active");
+            }
+        } else {
+            els.playerFighter.classList.remove("pose-active");
+        }
         state.poseResetTimer = setTimeout(() => {
-            setImg(els.charAttackImg, "", null);
+            if (poseId !== state.poseSessionId) return;
+            if (attackNode) {
+                attackNode.onload = null;
+                attackNode.onerror = null;
+                setImg(attackNode, "", null);
+            }
             els.playerFighter.classList.remove("pose-basic", "pose-burst");
             els.playerFighter.classList.remove("pose-active");
         }, durationMs);
