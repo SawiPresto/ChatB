@@ -31,6 +31,7 @@
         charFallback: document.getElementById("char-fallback"),
         enemyFallback: document.getElementById("enemy-fallback"),
         charBaseImg: document.getElementById("char-base-img"),
+        charAttackImg: document.getElementById("char-attack-img"),
         charSkinImg: document.getElementById("char-skin-img"),
         charWeaponImg: document.getElementById("char-weapon-img"),
         charPetImg: document.getElementById("char-pet-img"),
@@ -138,34 +139,26 @@
         return state.config.character_burst_attack_asset || "/static/game-assets/characters/sawipresto-burst-attack.png";
     }
 
-    function applyAttackPose(poseAsset, durationMs) {
+    function applyAttackPose(poseAsset, durationMs, poseClassName) {
         if (state.poseResetTimer) {
             clearTimeout(state.poseResetTimer);
             state.poseResetTimer = null;
         }
         els.playerFighter.classList.remove("pose-basic", "pose-burst");
-        els.playerFighter.classList.add("pose-active");
-        if (poseAsset) {
-            els.charBaseImg.classList.add("pose-switching");
-            setImg(els.charBaseImg, poseAsset, els.charFallback);
-            requestAnimationFrame(() => {
-                els.charBaseImg.classList.remove("pose-switching");
-            });
+        if (poseClassName) {
+            els.playerFighter.classList.add(poseClassName);
         }
+        els.playerFighter.classList.add("pose-active");
+        setImg(els.charAttackImg, poseAsset, null);
         state.poseResetTimer = setTimeout(() => {
-            els.charBaseImg.classList.add("pose-switching");
-            setImg(els.charBaseImg, getIdleBaseAsset(), els.charFallback);
-            requestAnimationFrame(() => {
-                els.charBaseImg.classList.remove("pose-switching");
-            });
+            setImg(els.charAttackImg, "", null);
             els.playerFighter.classList.remove("pose-basic", "pose-burst");
             els.playerFighter.classList.remove("pose-active");
         }, durationMs);
     }
 
     function triggerAttackFx(damage) {
-        els.playerFighter.classList.add("pose-basic");
-        applyAttackPose(getBasicAttackAsset(), 260);
+        applyAttackPose(getBasicAttackAsset(), 260, "pose-basic");
         els.playerFighter.classList.add("attacking");
         els.enemyFighter.classList.add("hit");
         els.slashFx.classList.add("active");
@@ -182,8 +175,7 @@
     }
 
     function triggerBurstFx(damage) {
-        els.playerFighter.classList.add("pose-burst");
-        applyAttackPose(getBurstAttackAsset(), 340);
+        applyAttackPose(getBurstAttackAsset(), 340, "pose-burst");
         els.playerFighter.classList.add("bursting");
         els.enemyFighter.classList.add("burst-hit");
         els.slashFx.classList.add("active");
@@ -206,6 +198,7 @@
         const weaponAsset = gameState && gameState.equipment && gameState.equipment.weapon ? gameState.equipment.weapon.asset : "";
         const petAsset = gameState && gameState.equipment && gameState.equipment.pet ? gameState.equipment.pet.asset : "";
         setImg(els.charBaseImg, baseAsset, els.charFallback);
+        setImg(els.charAttackImg, "", null);
         setImg(els.charSkinImg, skinAsset);
         setImg(els.charWeaponImg, weaponAsset);
         setImg(els.charPetImg, petAsset);
